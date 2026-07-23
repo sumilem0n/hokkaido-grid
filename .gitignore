@@ -5,3 +5,4 @@ __pycache__/
 .ruff_cache/
 sql/*.db
 python/*_over_500.csv
+python/*_over_500.csv

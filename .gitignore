@@ -6,3 +6,7 @@ __pycache__/
 sql/*.db
 python/*_over_500.csv
 python/*_over_500.csv
+
+# raw source data (regenerable; not redistributed)
+data/*.csv
+data/*.json

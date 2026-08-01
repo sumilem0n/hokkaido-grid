@@ -77,3 +77,53 @@ Column inventory (index -> field). Kept columns marked [x]; the rest exist and c
 
 ## Canonical key
 - datetime_jst: TEXT 'YYYY-MM-DD HH:MM', JST. area_demand at :00 and :30; weather_hourly at :00 only.
+
+
+## Daily source verification — 2026-08-01
+
+Fetched and inspected the live HEPCO daily URLs. Every assumption in §5 was
+wrong in some way; corrected below.
+
+### Retention (HEAD requests, HTTP status)
+- juyo_01_YYYYMMDD.csv:  Aug 1 & Jul 31 = 200; Jul 30 and older = 404
+- YYYYMMDD_hokkaido_jisseki.csv:  Jul 31 = 200; Jul 28 and older = 404
+- BOTH daily files are a ~2-day rolling tail. No historical archive at these URLs.
+
+### File shapes
+| File | Grain | Content | Units | Curtailment |
+|---|---|---|---|---|
+| monthly エリア需給 | 30-min | 22-col fuel breakdown | MW | YES (出力制御) |
+| daily juyo_01 | hourly (section 3 of a multi-section file) | demand/forecast/usage-rate | 万kW (x10 vs MW) | no |
+| daily jisseki | 30-min | total demand / total gen / wind+solar gen | kWh | no (generation, not curtailment) |
+
+### Key findings
+- juyo_01 is a MULTI-SECTION file: peak/reserve summary blocks first, then an
+  hourly DATE,TIME,当日実績,予測値,使用率,供給力想定値 table starting ~line 10.
+  inspect_csv.py's "which line is the header" limit fired here as expected;
+  read past it by hand. Confirmed logged limitation + workaround.
+- jisseki is a clean single-table 30-min daily preliminary actuals (superseded by the monthly corrected record). Has
+  エリア風力・太陽光発電量 (wind+solar GENERATION) — useful as a curtailment
+  denominator, but NOT curtailment itself.
+- THREE different units across three files (MW / 万kW / kWh). Any loader must
+  convert per-source. This is the ×10 unit trap from Day 1, now ×3.
+- All three files: cp932/shift_jis decode clean, utf-8 raises. juyo & jisseki
+  are LF; monthly is CRLF.
+
+### Decisions
+1. Curtailment (rung 7): MONTHLY file is the sole source. Confirmed.
+2. Backfill: CANNOT come from either daily URL (2-day tail). Week 5's "90-day
+   backfill from the daily source" is void as written. History must come from
+   archived MONTHLY files (check whether HEPCO archives past months — TODO).
+3. Daily operational spine: use JISSEKI, not juyo. Cleaner structure, 30-min
+   grain matches area_demand, daily preliminary actuals. Cost: kWh->MW conversion,
+   hour-floor weather join (loader already does this).
+4. Pipeline's real job = FORWARD CAPTURE. Both daily feeds vanish in ~2 days,
+   so a missed cron fetch is permanent unrecoverable data loss. Raises the
+   stakes on rung 5 (fail loudly) and monitoring.
+
+### Consequences for the plan
+- Week 4 rung 1: fetch jisseki (not the guessed juyo URL). URL pattern:
+  https://denkiyoho.hepco.co.jp/area/data/YYYYMMDD_hokkaido_jisseki.csv
+- Week 5: rewrite "90-day backfill" -> "start daily capture now; backfill
+  history from monthly archive if available."
+- New loader concern: unit conversion per source (MW / 万kW / kWh).

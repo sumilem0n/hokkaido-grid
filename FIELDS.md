@@ -109,6 +109,10 @@ wrong in some way; corrected below.
 - All three files: cp932/shift_jis decode clean, utf-8 raises. juyo & jisseki
   are LF; monthly is CRLF.
 
+**Partially superseded — see "hepco jisseki (daily) — source picture" (2026-08-03).**
+Wrong here: "clean single-table" (two banner lines), "~2-day tail" (one day),
+column names (carry unit suffixes).
+
 ### Decisions
 1. Curtailment (rung 7): MONTHLY file is the sole source. Confirmed.
 2. Backfill: CANNOT come from either daily URL (2-day tail). Week 5's "90-day
@@ -127,3 +131,66 @@ wrong in some way; corrected below.
 - Week 5: rewrite "90-day backfill" -> "start daily capture now; backfill
   history from monthly archive if available."
 - New loader concern: unit conversion per source (MW / 万kW / kWh).
+
+## hepco jisseki (daily) — source picture
+
+Corrected 2026-08-03. Three assumptions from the original plan were wrong;
+all three are recorded here with the measurement that overturned them.
+
+### Retention: 2 days
+
+| date fetched | target | age | result |
+|---|---|---|---|
+| 2026-08-01 | 2026-07-31 | 1 | 200 |
+| 2026-08-01 | 2026-07-28 | 4 | 404 |
+| 2026-08-03 | 2026-08-02 | 1 | 200 |
+| 2026-08-03 | 2026-08-01 | 2 | 404 |
+
+The window is today and yesterday. One shot per day — a missed cron run
+loses that day permanently, with no second attempt possible. §5's "~2-day
+tail" is wrong and should read one.
+
+`RETENTION_DAYS = 2` in sources/hepco_daily.py.
+
+### The daily file is 47 rows, not 48
+
+`20260802_hokkaido_jisseki.csv`:
+- internal stamp `20260802,23:42:44,20260802`
+- `last-modified: Sun, 02 Aug 2026 14:59:03 GMT` (23:59:03 JST)
+- `時間コマ 48` (23:30–24:00): date, index and both boundary times present,
+  all three measurement columns empty
+- still empty when re-fetched 2026-08-03; the file is never rewritten
+
+The file is finalised before its last period closes, so 23:30–24:00 never
+appears in the daily feed at any age. A complete daily file is 47 rows.
+That period comes from the monthly file — this is why the two-track design
+exists, every day, not as a backfill for missed runs.
+
+One observation. `ROWS_PER_DAY = 47` is asserted exactly rather than as a
+floor, so a 48-row day fails loudly: that assert firing is how we find out
+HEPCO changed its publishing behaviour.
+
+### File shape
+
+    line 1  ファイル更新日,ファイル更新時間,対象年月日
+    line 2  20260802,23:42:44,20260802
+    line 3  日付,時間コマ,時間帯_自,時間帯_至,エリア総需要量(kWh),
+            エリア総発電量(kWh),エリア風力・太陽光発電量(kWh)
+    line 4  20260802,1,0:00,0:30,1193000,1338500,165000
+
+Two banner lines, then the header — the plan said this file was banner-free.
+Dates are `%Y%m%d`, not slashed. The demand column carries its unit in the
+name; the code matches the prefix and asserts `kWh` separately, because a
+change to 万kW would silently break the ÷500 conversion.
+
+Encoding CP932. 404 responses are UTF-8 HTML, so status is checked before
+decoding.
+
+### Bounds
+
+MIN_MW 1500 / MAX_MW 6000, set 2026-08-03 from area_demand: measured
+2440.0–3948.0 over 1440 rows (30 days). Headroom widened both ways because
+the sample is one shoulder-season month with no winter peak or summer
+trough. Every wrong unit convention lands outside: raw kWh ~1.2e6,
+double-converted ~5–8, 万kW ~250–400 or ~24000–40000. Observed daily file
+checks out: 1193000 ÷ 500 = 2386 MW at 00:00.

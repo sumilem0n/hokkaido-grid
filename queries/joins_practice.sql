@@ -49,7 +49,7 @@ ORDER BY day;
 --     Filtering moves from the row level to the column level, so one pass produces
 --     several differently-filtered measures. Same shape as rung 7's curtailment share.
 --     100.0 not 100: integer division would floor the ratio to 0 before the multiply.
---     Predicted: 30 rows, one per April day. Actual ____.
+--     Predicted: 30 rows, one per April day. Actual 30.
 SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
        ROUND(AVG(demand_mw), 1)                          AS avg_mw,
        SUM(CASE WHEN demand_mw > 3500 THEN 1 ELSE 0 END) AS periods_over_3500,
@@ -69,10 +69,7 @@ ORDER BY day;
 -- (03:00 and 03:30) must go unmatched. Expected 2; measured 2 on 2026-08-04.
 -- The exclusion belongs in ON, not WHERE: in WHERE it runs after NULL padding,
 -- NULL <> '...' is not true, and the orphans are deleted instead of found.
---
--- SELECT COUNT(*) FROM area_demand AS d
--- LEFT JOIN weather_hourly AS w
---        ON strftime('%Y-%m-%d %H:00', d.datetime_jst) = w.datetime_jst
---       AND w.datetime_jst <> '2026-04-15 03:00'
--- WHERE w.datetime_jst IS NULL;
--- ---------------------------------------------------------------------------
+--     Follow-up (2026-08-04): the ten 0.0 days are all Sat/Sun plus 4/29 (Showa Day).
+--     Grouped by strftime('%w'): weekend pct_over is 0.0 on both days, weekdays 6.8-18.2.
+--     Weekday means cluster tightly (3129-3197); the within-weekday pct_over spread is
+--     n~4 noise, not a finding. Demand has a weekly cycle independent of temperatur.--

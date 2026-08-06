@@ -16,6 +16,10 @@ import json
 import sqlite3
 from datetime import datetime
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 DB_PATH = "sql/hokkaido.db"
 DEMAND_CSV = "data/hepco_demand_2026-04.csv"
 WEATHER_JSON = "data/weather_sapporo_2026-04.json"
@@ -59,8 +63,7 @@ def load_demand(conn, path):
             "VALUES (?, ?, ?, ?, ?);",
             rows,
         )
-    print(f"area_demand:    inserted {len(rows)} rows, dropped {dropped} blank")
-
+    logger.info("area_demand: inserted %s rows, dropped %s blank", len(rows), dropped)
 
 def load_weather(conn, path):
     with open(path, encoding="utf-8") as f:
@@ -87,10 +90,15 @@ def load_weather(conn, path):
             "VALUES (?, ?, ?, ?, ?, ?);",
             rows,
         )
-    print(f"weather_hourly: inserted {len(rows)} rows")
+    logger.info("weather_hourly: inserted %s rows", len(rows))
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     conn = sqlite3.connect(DB_PATH)
     try:
         load_demand(conn, DEMAND_CSV)

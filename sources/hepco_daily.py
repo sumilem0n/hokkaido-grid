@@ -319,10 +319,4 @@ def _parse_row(raw, demand_col):
     return {"datetime_jst": stamp, "demand_mw": mw}
 
 
-if __name__ == "__main__":
-    # Throwaway. Thursday's logging pass deletes this.
-    import sys
 
-    target = datetime.date.today() - datetime.timedelta(days=1)
-    result = fetch(target)
-    print(f"{target}: {len(result)} rows, first={result[0]}", file=sys.stderr)

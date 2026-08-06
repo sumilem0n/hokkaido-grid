@@ -1,0 +1,21 @@
+
+<!doctype html>
+<meta charset="utf-8">
+<title>CORS test</title>
+<button id="go">Fetch demand</button>
+<pre id="out">(nothing yet)</pre>
+<script>
+document.getElementById("go").addEventListener("click", async () => {
+  const out = document.getElementById("out");
+  out.textContent = "requesting…";
+  try {
+   const res = await fetch("http://localhost:8000/api/demand?date=2026-04-01", {
+      headers: { "X-Requested-With": "xhr" }
+    });
+    const data = await res.json();
+    out.textContent = `${data.count} rows; first = ${JSON.stringify(data.rows[0])}`;
+  } catch (err) {
+    out.textContent = "FAILED: " + err;
+  }
+});
+</script>

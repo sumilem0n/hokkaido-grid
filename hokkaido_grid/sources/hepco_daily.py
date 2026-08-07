@@ -1,4 +1,4 @@
-"""Fetch one day of HEPCO Hokkaido area demand (jisseki) as 48 half-hourly rows.
+"""Fetch one day of HEPCO Hokkaido area demand (jisseki) as half-hourly rows.
 
 Retention on this feed is roughly two days, so a missed capture is permanent.
 This module therefore never returns [] for a day it could not get: every
@@ -30,38 +30,7 @@ import io
 
 import requests
 
-
-class SourceUnavailable(Exception):
-    """The data cannot be obtained now and retrying will not change that.
-
-    This currently carries two distinct meanings that week 6 separates:
-
-      1. The data is gone. Past retention, unrecoverable. This is the
-         meaning the name describes.
-      2. The file is not the file we expect. No header found, wrong demand
-         column, unparseable rows, values outside the plausible band.
-         Nothing is lost; the source changed shape. Week 6 names this
-         SchemaChanged.
-
-    Both are "do not retry", which is why one type is enough for now.
-    When SchemaChanged arrives, cases (2) move to it: _find_header,
-    _resolve_demand_col, the unparseable-row re-raise in fetch(), the
-    row-count check, and the bounds check in _parse_row(). The retention
-    branch stays here.
-    """
-
-
-class SourceTransientError(Exception):
-    """The fetch failed for a reason that may resolve on a later attempt.
-
-    Includes a file that arrived intact but incomplete: HEPCO publishes
-    before the day's last periods have closed, leaving placeholder rows.
-    Retrying is the only way to get them, so a partial day leaves as this
-    rather than as a permanent failure -- even though it means a day that
-    never backfills will retry until the file drops out of retention and
-    the 404 branch calls it what it is.
-    """
-
+from hokkaido_grid.errors import SourceTransientError, SourceUnavailable  
 
 BASE_URL = "https://denkiyoho.hepco.co.jp/area/data/{stamp}_hokkaido_jisseki.csv"
 
@@ -90,7 +59,7 @@ DEMAND_UNIT = "kWh"
 
 ROWS_PER_DAY = 47
 
-# 47, not 48, and asserted exactly. The daily file is finalised before its
+# 47, not o8, and asserted exactly. The daily file is finalised before its
 # last period closes -- 2026-08-02 was generated 23:42:44, uploaded 23:59:03,
 # and never rewritten, leaving 時間コマ 48 (23:30-24:00) empty at every age it
 # was reachable. That period is structurally unavailable from this feed and
@@ -122,7 +91,7 @@ MAX_MW = 6000.0
 
 
 def fetch(date, today=None):
-    """Return 48 rows of half-hourly demand for `date`.
+    """Return one day of half-hourly demand for `date` (ROWS_PER_DAY rows).
 
     Each row is {"datetime_jst": "YYYY-MM-DD HH:MM", "demand_mw": float},
     keyed to match area_demand so the loader needs no translation layer.

@@ -16,6 +16,8 @@ CREATE TABLE area_demand (
     solar_mw        REAL,                        -- 太陽光発電実績 (col 13), MW — weather-sensitive
     wind_mw         REAL,                        -- 風力発電実績 (col 15), MW — weather-sensitive
     supply_total_mw REAL,                        -- 合計 (col 21), MW — equals demand in a balanced grid
+    source TEXT NOT NULL
+        CHECK (source IN ('hepco_daily_jisseki', 'hepco_monthly_areajukyu')),
     CHECK (demand_mw >= 0),
     CHECK (solar_mw IS NULL OR solar_mw >= 0),
     CHECK (wind_mw  IS NULL OR wind_mw  >= 0)

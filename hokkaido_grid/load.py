@@ -1,5 +1,3 @@
-
-
 """
 Capstone loader — Hokkaido grid demand + Sapporo weather -> SQLite.
 
@@ -8,15 +6,18 @@ Loads two already-fetched files into sql/hokkaido.db (schema built on Day 1):
   data/weather_sapporo_2026-04.json (Open-Meteo ERA5, JST, hourly)                -> weather_hourly
 
 Run from the repo root (~/hokkaido-grid):
-    uv run python python/load.py
+    uv run python hokkaido_grid/load.py
+
+The paths below are relative to the working directory, which is why that
+instruction exists. main.py anchors its paths to __file__ instead and does not
+need it; this module keeps the constraint until it is given the same treatment.
 """
 
 import csv
 import json
-import sqlite3
-from datetime import datetime
-
 import logging
+import sqlite3
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,12 @@ def _to_float(value):
         return None
 
 
-def load_demand(conn, path):
+def parse_monthly_demand(path):
+    """Read the monthly エリア需給 file into canonical rows. No database.
+
+    Split out of load_demand 2026-08-07 so parsing is testable without a
+    connection -- which is most of what week 7's pytest work needs.
+    """
     rows = []
     dropped = 0
     with open(path, encoding="cp932", newline="") as f:
@@ -47,25 +53,76 @@ def load_demand(conn, path):
                 dropped += 1
                 continue
             dt = datetime.strptime(f"{row['DATE']} {row['TIME']}", "%Y/%m/%d %H:%M")
-            datetime_jst = dt.strftime("%Y-%m-%d %H:%M")   # canonical: zero-padded, space
-            rows.append((
-                datetime_jst,
-                _to_float(row.get("エリア需要")),          # demand_mw   — NO x10, already MW
-                _to_float(row.get("太陽光発電実績")),      # solar_mw
-                _to_float(row.get("風力発電実績")),        # wind_mw
-                _to_float(row.get("合計")),                # supply_total_mw
-            ))
+            rows.append({
+                "datetime_jst":    dt.strftime("%Y-%m-%d %H:%M"),  # canonical: zero-padded, space
+                "demand_mw":       _to_float(row.get("エリア需要")),      # NO x10, already MW
+                "solar_mw":        _to_float(row.get("太陽光発電実績")),
+                "wind_mw":         _to_float(row.get("風力発電実績")),
+                "supply_total_mw": _to_float(row.get("合計")),
+            })
+    return rows, dropped
+
+
+def load_rows(conn, table, rows, source, *, day=None):
+    """Insert dict-rows into `table`, replacing what is already there.
+
+    Scope is the caller's decision because only the caller knows its cadence.
+    day=None replaces the whole table -- the monthly track's full reload.
+    day=<date> replaces one day, which is what forward capture needs. Running
+    the daily fetch through a whole-table DELETE would have wiped every other
+    day in the table; same idempotency guarantee, two scopes.
+
+    Rows are dicts, not tuples, so the column list comes from the data and this
+    function stays source-agnostic: a tuple carries no column names and would
+    need one hardcoded shape per source.
+    """
+    if not rows:
+        # fetch() guarantees it raises rather than returning [], but a loader
+        # that silently accepts an empty list is one refactor away from being
+        # a truncation.
+        raise ValueError(f"{table}: refusing to run with no rows")
+
+    columns = sorted(rows[0])
+    if any(sorted(r) != columns for r in rows):
+        raise ValueError(f"{table}: rows have inconsistent keys")
+    if "source" in columns:
+        raise ValueError("source is stamped by the loader, not the source module")
+
+    insert_cols = columns + ["source"]
+    placeholders = ", ".join("?" * len(insert_cols))
+    payload = [tuple(r[c] for c in columns) + (source,) for r in rows]
+
     with conn:                             # one transaction: DELETE + INSERT together
-        conn.execute("DELETE FROM area_demand;")
+        if day is None:
+            deleted = conn.execute(f"DELETE FROM {table};").rowcount
+        else:
+            # Half-open window. datetime_jst is fixed-width ISO TEXT, so
+            # lexicographic order is chronological order -- the property that
+            # made the TEXT primary key safe, leaned on here for the first time.
+            start = f"{day.isoformat()} 00:00"
+            end = f"{(day + timedelta(days=1)).isoformat()} 00:00"
+            deleted = conn.execute(
+                f"DELETE FROM {table} WHERE datetime_jst >= ? AND datetime_jst < ?;",
+                (start, end),
+            ).rowcount
         conn.executemany(
-            "INSERT INTO area_demand "
-            "(datetime_jst, demand_mw, solar_mw, wind_mw, supply_total_mw) "
-            "VALUES (?, ?, ?, ?, ?);",
-            rows,
+            f"INSERT INTO {table} ({', '.join(insert_cols)}) VALUES ({placeholders});",
+            payload,
         )
-    logger.info("area_demand: inserted %s rows, dropped %s blank", len(rows), dropped)
+    logger.info("%s: deleted %s, inserted %s (%s, scope=%s)",
+                table, deleted, len(payload), source, day or "all")
+
+
+def load_demand(conn, path):
+    rows, dropped = parse_monthly_demand(path)
+    load_rows(conn, "area_demand", rows, "hepco_monthly_areajukyu")
+    logger.info("area_demand: dropped %s blank rows", dropped)
+
 
 def load_weather(conn, path):
+    # Deliberately not routed through load_rows: weather_hourly has no source
+    # column, because there is one weather source and no provenance question.
+    # Inconsistent on purpose; revisit when openmeteo.py becomes a fetcher.
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     h = data["hourly"]                     # parallel arrays: time[], temperature_2m[], ...

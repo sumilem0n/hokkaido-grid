@@ -27,6 +27,7 @@ monthly file. Retention is two days: today and yesterday, one shot per day.
 import csv
 import datetime
 import io
+import re
 
 import requests
 
@@ -50,16 +51,21 @@ TIME_COL = "時間帯_自"
 DATE_FORMAT = "%Y%m%d"
 
 # The demand column is エリア総需要量(kWh) -- the unit is part of the name.
-# Matching the prefix and checking the unit separately is deliberate: the
-# bracket characters could be ASCII or full-width and that distinction
-# carries no meaning, while a unit that changed from kWh to 万kW would
-# silently break the conversion below. Check the thing that matters.
+# Prefix and unit are checked separately: bracket width is punctuation and
+# carries no meaning, while the unit governs KWH_PER_30MIN_TO_MW. Strict on
+# the unit, tolerant of the punctuation -- strict where being wrong is
+# silent, tolerant where it is cosmetic. A spurious raise on a feed with a
+# two-day tail costs a day that cannot be refetched.
 DEMAND_PREFIX = "エリア総需要量"
 DEMAND_UNIT = "kWh"
 
+# The parenthesised unit at the tail of a header name, half- or full-width.
+_UNIT_SUFFIX = re.compile(r"[(（]\s*([^)）]+?)\s*[)）]\s*$")
+
+
 ROWS_PER_DAY = 47
 
-# 47, not o8, and asserted exactly. The daily file is finalised before its
+# 47, not 48, and asserted exactly. The daily file is finalised before its
 # last period closes -- 2026-08-02 was generated 23:42:44, uploaded 23:59:03,
 # and never rewritten, leaving 時間コマ 48 (23:30-24:00) empty at every age it
 # was reachable. That period is structurally unavailable from this feed and
@@ -239,12 +245,18 @@ def _resolve_demand_col(fields):
             f"expected exactly one {DEMAND_PREFIX}* column, found {matches}"
         )
     col = matches[0]
-    if DEMAND_UNIT not in col:
-        # KWH_PER_30MIN_TO_MW assumes kWh accumulated over 30 minutes. If the
-        # unit in the header changed, the arithmetic below is wrong by a
-        # factor nobody would notice from the shape of the output.
+    match = _UNIT_SUFFIX.search(col.strip())
+    unit = match.group(1) if match else None
+    # Equality, not membership. DEMAND_UNIT is a substring of "kWh/h", so
+    # `DEMAND_UNIT not in col` passed the one rename this guard exists to
+    # catch: a figure already expressed per hour still gets divided by 500,
+    # and every value lands at exactly double -- inside [MIN_MW, MAX_MW] for
+    # any period below 3000 MW true demand, which is most of the night.
+    # The old comment cited 万kW, which membership does catch. Picking the
+    # example that works is how this survived review.
+    if unit != DEMAND_UNIT:
         raise SourceUnavailable(
-            f"demand column is {col!r}, expected {DEMAND_UNIT}: "
+            f"demand column is {col!r}, unit {unit!r}, expected {DEMAND_UNIT!r}: "
             f"the /{KWH_PER_30MIN_TO_MW:.0f} conversion no longer holds"
         )
     return col

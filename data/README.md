@@ -5,8 +5,56 @@ Raw source files for the Hokkaido grid capstone. **Not committed** (see `.gitign
 regenerable from the sources below.
 
 ## hepco_demand_2026-04.csv
-HEPCO area supply-demand actuals (エリア需給実績), April 2026, from Hokkaido Electric
-Power's disclosure page. Encoding CP932, line endings CRLF, 30-minute grain, unit MW.
+HEPCO area supply-demand actuals (エリア需給実績), April 2026. CP932, CRLF,
+30-minute grain, MW. Local rename of `eria_jukyu_202604_01.csv`.
+
+Regenerate:
+    curl -sS "https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/csv/eria_jukyu_202604_01.csv" -o data/hepco_demand_2026-04.csv
+
+Verified byte-identical to the source on 2026-08-08 (downloaded 2026-07-25).
+NOTE: HEPCO may correct past months retroactively, without notice, and does not
+publish pre-correction versions. Re-fetching is not guaranteed to reproduce this file.
+
+## Monthly archive check — 2026-08-08
+
+**Question:** does HEPCO archive past monthly エリア需給 files? (gates week 5)
+**Answer: YES, back to 2016年度.**
+
+Index (was recorded nowhere in this repo before today):
+  https://www.hepco.co.jp/network/con_service/public_document/supply_demand_results/index.html
+Monthly, 202404 onward:  .../csv/eria_jukyu_YYYYMM_01.csv
+Quarterly, before that:  .../csv/sup_dem_results_YYYY_Nq.csv  (2018_2q is .xls)
+  -> OUT OF SCOPE. Separate schema, separate parser. Not a gap; a decision.
+
+**Provenance:** data/hepco_demand_2026-04.csv is byte-identical (124,600 B) to
+eria_jukyu_202604_01.csv, fetched 2026-08-08, downloaded 2026-07-25.
+Unchanged over 15 days — one observation, not a retention guarantee.
+
+**TWO LAYOUTS, not one** (tools/check_monthly_schema.py, 28 months probed):
+  layout 1  20 cols  202404..202503
+  layout 2  22 cols  202504..202607  (+火力出力制御量, +バイオマス出力制御量)
+The page announces a 様式変更 at 2024-04 and does not mention this one.
+Both breaks fall on 1 April (年度 boundary); predict the next at 202704.
+
+**Index-based parsing is unsafe across the break.** Position 8 = 水力 in
+layout 1, 火力出力制御量 in layout 2. Resolve columns BY NAME and raise when
+a name is absent. Same rule as the daily unit guard.
+
+**Backfill scope: 28 months (202404-202607), not 16.** The four columns the
+current schema loads — エリア需要 / 太陽光発電実績 / 風力発電実績 / 合計 —
+exist in both layouts. The split constrains rung 7 only:
+  solar + wind curtailment  -> comparable across all 28 months
+  thermal + biomass         -> 202504 onward only
+A summed "total curtailment" series would step at 2025-04 for reporting
+reasons, not grid reasons. Week 10 decision, evidence recorded now.
+
+**Mutability.** The page states past data may be corrected retroactively,
+without notice, with no pre-correction version provided. A backfill is a
+SNAPSHOT. Capture date is provenance. This justifies the monthly track's
+full-reload DELETE+INSERT: newest correction wins.
+
+**Revision suffix:** `_02` on 202404 returns 404; `_01` is constant as of today.
+If a correction ever publishes as `_02`, URL construction 404s silently.
 
 ## weather_sapporo_2026-04.json
 Open-Meteo ERA5 historical reanalysis. Sapporo (lat 43.06, lon 141.35 requested; ERA5

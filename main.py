@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from hokkaido_grid.errors import SourceTransientError, SourceUnavailable
-from hokkaido_grid.load import replace_rows
+from hokkaido_grid.load import merge_rows
 from hokkaido_grid.sources import hepco_daily
 
 # Anchored to the file, never to the working directory. sys.path[0] is the
@@ -54,9 +54,10 @@ def main(argv):
 
     conn = sqlite3.connect(DB_PATH)
     try:
-        # scope=day, not the whole table. The monthly reload owns the table;
-        # this owns one day of it.
-        replace_rows(conn, "area_demand", rows, SOURCE_NAME, day=day)
+        # Merge, not replace: this file holds 47 of the day's 48 periods, so a
+        # scoped delete would destroy the 23:30 row it cannot put back.
+        # Precedence is in the SQL -- monthly rows survive this run.
+        merge_rows(conn, "area_demand", rows, SOURCE_NAME)
     finally:
         # with conn: manages the transaction, not the connection.
         conn.close()

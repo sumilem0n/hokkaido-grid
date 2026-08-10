@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 DB_PATH = "sql/hokkaido.db"
 DEMAND_CSV = "data/hepco_demand_2026-04.csv"
 WEATHER_JSON = "data/weather_sapporo_2026-04.json"
+KEY_COLUMN = "datetime_jst"
+AUTHORITATIVE_SOURCE = "hepco_monthly_areajukyu"
 
 
 def _to_float(value):
@@ -63,6 +65,42 @@ def parse_monthly_demand(path):
     return rows, dropped
 
 
+def _prepare(table, rows, source):
+    """Validate rows and build the payload tuples. Shared by both writers.
+
+    The empty check earns its place twice over. For merge, no rows means the
+    fetch failed silently. For replace, no rows means deleting a month and
+    putting nothing back -- the loudest possible case of the rule that a
+    delete must be a subset of what the insert can supply. fetch() guarantees
+    it raises rather than returning [], but a loader that silently accepts an
+    empty list is one refactor away from being a truncation.
+
+    Rows are dicts, not tuples, so the column list comes from the data and
+    this stays source-agnostic: a tuple carries no column names and would need
+    one hardcoded shape per source.
+    """
+    if not rows:
+        raise ValueError(f"{table}: refusing to run with no rows")
+
+    columns = sorted(rows[0])
+    if any(sorted(r) != columns for r in rows):
+        raise ValueError(f"{table}: rows have inconsistent keys")
+    if "source" in columns:
+        raise ValueError("source is stamped by the loader, not the source module")
+
+    payload = [tuple(r[c] for c in columns) + (source,) for r in rows]
+    return columns, payload
+
+
+def _insert(conn, table, columns, payload, tail=""):
+    """Shared: assemble the INSERT and run it. Returns rows actually written."""
+    insert_cols = columns + ["source"]
+    placeholders = ", ".join("?" * len(insert_cols))
+    sql = (f"INSERT INTO {table} ({', '.join(insert_cols)}) "
+           f"VALUES ({placeholders}){tail}")
+    return conn.executemany(sql, payload).rowcount
+
+
 def replace_rows(conn, table, rows, source, *, day=None):
     """Insert dict-rows into `table`, replacing what is already there.
 
@@ -72,25 +110,12 @@ def replace_rows(conn, table, rows, source, *, day=None):
     the daily fetch through a whole-table DELETE would have wiped every other
     day in the table; same idempotency guarantee, two scopes.
 
-    Rows are dicts, not tuples, so the column list comes from the data and this
-    function stays source-agnostic: a tuple carries no column names and would
-    need one hardcoded shape per source.
+    day=None will not survive the backfill: 28 monthly files loaded one at a
+    time would each wipe the previous 27. Week 6 needs a month-scoped window,
+    and merge_rows depends on it -- that reload is what collects the ghost
+    rows merge cannot delete.
     """
-    if not rows:
-        # fetch() guarantees it raises rather than returning [], but a loader
-        # that silently accepts an empty list is one refactor away from being
-        # a truncation.
-        raise ValueError(f"{table}: refusing to run with no rows")
-
-    columns = sorted(rows[0])
-    if any(sorted(r) != columns for r in rows):
-        raise ValueError(f"{table}: rows have inconsistent keys")
-    if "source" in columns:
-        raise ValueError("source is stamped by the loader, not the source module")
-
-    insert_cols = columns + ["source"]
-    placeholders = ", ".join("?" * len(insert_cols))
-    payload = [tuple(r[c] for c in columns) + (source,) for r in rows]
+    columns, payload = _prepare(table, rows, source)
 
     with conn:                             # one transaction: DELETE + INSERT together
         if day is None:
@@ -105,12 +130,52 @@ def replace_rows(conn, table, rows, source, *, day=None):
                 f"DELETE FROM {table} WHERE datetime_jst >= ? AND datetime_jst < ?;",
                 (start, end),
             ).rowcount
-        conn.executemany(
-            f"INSERT INTO {table} ({', '.join(insert_cols)}) VALUES ({placeholders});",
-            payload,
-        )
+        _insert(conn, table, columns, payload)
+
     logger.info("%s: deleted %s, inserted %s (%s, scope=%s)",
                 table, deleted, len(payload), source, day or "all")
+
+
+def merge_rows(conn, table, rows, source):
+    """Fragment append: INSERT with conflict handling, no DELETE.
+
+    For a source that holds part of a key range rather than all of it. The
+    daily feed is 47 rows of a 48-period day, so it must not delete the day:
+    the 23:30 row it cannot supply came from the monthly file and has to
+    survive the run.
+
+    Precedence lives in the SQL, not in the schedule. Monthly overwrites
+    daily; daily never overwrites monthly; either source refreshing its own
+    rows always wins. Order-independent, so backfill order and cron drift
+    converge on the same table.
+
+    Nothing here deletes, so the table can only grow. Ghost rows -- a
+    retraction, a corrected short file -- die at month grain when the
+    month-scoped replace_rows reloads over them. Week 6, before the 30 Aug
+    backfill; without it there is no collector.
+    """
+    columns, payload = _prepare(table, rows, source)
+    if KEY_COLUMN not in columns:
+        raise ValueError(f"{table}: merge needs {KEY_COLUMN} to resolve conflicts")
+
+    # Update every column the rows carry, except the key -- setting the key
+    # to itself is a no-op. AUTHORITATIVE_SOURCE and the column names are
+    # module constants and schema, not input; same reason table is already
+    # interpolated. Parameterising the constant would append it to all 47
+    # payload tuples for no gain. The values stay parameterised.
+    assignments = ", ".join(f"{c} = excluded.{c}"
+                            for c in columns + ["source"] if c != KEY_COLUMN)
+    tail = (
+        f" ON CONFLICT({KEY_COLUMN}) DO UPDATE SET {assignments}"
+        f" WHERE excluded.source = '{AUTHORITATIVE_SOURCE}'"
+        f" OR {table}.source = excluded.source"
+    )
+
+    with conn:
+        written = _insert(conn, table, columns, payload, tail)
+
+    logger.info("%s: %s of %s rows written, %s left to a better source (%s, merge)",
+                table, written, len(payload), len(payload) - written, source)
 
 
 def load_demand(conn, path):
@@ -120,8 +185,10 @@ def load_demand(conn, path):
 
 
 def load_weather(conn, path):
-    # Deliberately not routed through replace_rows: weather_hourly has no source
-    # column, because there is one weather source and no provenance question.
+    # Third write strategy in this module, deliberately: neither replace_rows
+    # nor merge_rows. weather_hourly has no source column, because there is
+    # one weather source and no provenance question -- so there is nothing for
+    # merge's guard to compare and nothing for replace's stamp to record.
     # Inconsistent on purpose; revisit when openmeteo.py becomes a fetcher.
     with open(path, encoding="utf-8") as f:
         data = json.load(f)

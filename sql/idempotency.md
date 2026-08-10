@@ -63,3 +63,18 @@ deadline depends on.
 The source names in the ON CONFLICT guard also live in the `source` CHECK
 constraint in `schema.sql`. One fact, two homes. A third source turns the
 literal into data — a rank column or a precedence table.
+
+## Measured 11 Aug
+
+**`rowcount` counts rows the guard let through, not rows whose values changed.**
+A re-run with identical data reported 47 of 47 — SQLite counts a `DO UPDATE`
+that writes a column its existing value as a write. With one monthly row planted
+at a timestamp the daily file covers, it reported 46 of 47. So "left to a better
+source" is measured, not inferred; it does not mean "rows that differ."
+
+**`fetch` refuses an incomplete day, so a partial day never reaches merge.**
+Observed at 18:56 on 10 Aug: 10 of 47 periods unpublished, `SourceTransientError`
+raised. Merge exists so a later run can top up a day, but that path is blocked
+upstream. Week 6's cron decision: one run late enough to be safe, or repeated
+runs with `fetch` returning partial days and merge filling the gaps. The second
+is only possible if the completeness check moves out of `fetch`.

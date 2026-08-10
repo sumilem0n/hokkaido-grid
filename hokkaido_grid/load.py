@@ -63,7 +63,7 @@ def parse_monthly_demand(path):
     return rows, dropped
 
 
-def load_rows(conn, table, rows, source, *, day=None):
+def replace_rows(conn, table, rows, source, *, day=None):
     """Insert dict-rows into `table`, replacing what is already there.
 
     Scope is the caller's decision because only the caller knows its cadence.
@@ -115,12 +115,12 @@ def load_rows(conn, table, rows, source, *, day=None):
 
 def load_demand(conn, path):
     rows, dropped = parse_monthly_demand(path)
-    load_rows(conn, "area_demand", rows, "hepco_monthly_areajukyu")
+    replace_rows(conn, "area_demand", rows, "hepco_monthly_areajukyu")
     logger.info("area_demand: dropped %s blank rows", dropped)
 
 
 def load_weather(conn, path):
-    # Deliberately not routed through load_rows: weather_hourly has no source
+    # Deliberately not routed through replace_rows: weather_hourly has no source
     # column, because there is one weather source and no provenance question.
     # Inconsistent on purpose; revisit when openmeteo.py becomes a fetcher.
     with open(path, encoding="utf-8") as f:

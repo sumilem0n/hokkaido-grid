@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from hokkaido_grid.errors import SourceTransientError, SourceUnavailable
-from hokkaido_grid.load import load_rows
+from hokkaido_grid.load import replace_rows
 from hokkaido_grid.sources import hepco_daily
 
 # Anchored to the file, never to the working directory. sys.path[0] is the
@@ -56,7 +56,7 @@ def main(argv):
     try:
         # scope=day, not the whole table. The monthly reload owns the table;
         # this owns one day of it.
-        load_rows(conn, "area_demand", rows, SOURCE_NAME, day=day)
+        replace_rows(conn, "area_demand", rows, SOURCE_NAME, day=day)
     finally:
         # with conn: manages the transaction, not the connection.
         conn.close()

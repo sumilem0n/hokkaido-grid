@@ -1,0 +1,9 @@
+# hokkaido-grid configuration.
+# Relative paths resolve against the repo root (the directory holding this file),
+# so the pipeline behaves identically from any working directory -- including cron's.
+
+[paths]
+db = "sql/hokkaido.db"
+
+[logging]
+level = "INFO"

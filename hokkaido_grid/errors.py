@@ -1,4 +1,4 @@
-"""Exceptions shared by every source module.
+"""Exceptions this pipeline can fail with.
 
 Hoisted from hepco_daily 2026-08-07: openmeteo needs the same two types, and
 a source module importing them from a sibling source module is the wrong
@@ -47,3 +47,7 @@ class SourceTransientError(Exception):
     never backfills will retry until the file drops out of retention and
     the 404 branch calls it what it is.
     """
+
+
+class ConfigError(Exception):
+    """config.toml is missing, unreadable, or holds a value that cannot be used."""

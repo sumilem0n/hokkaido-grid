@@ -33,6 +33,12 @@ def build_parser():
 
     monthly = sub.add_parser(
         "monthly",
+        description="DELETES THE WHOLE area_demand TABLE first, daily rows "
+                    "included, then inserts this file. replace_rows takes a "
+                    "source but neither DELETE branch filters on it, so the "
+                    "daily track's rows go too -- including the 23:30 period "
+                    "merge_rows exists to preserve. Do not loop this until "
+                    "week 6 scopes replace_rows by month.",
         help="load a monthly areajukyu CSV -- DELETES THE WHOLE area_demand "
              "TABLE first, daily rows included, then inserts this file. Do not "
              "loop this until week 6 scopes replace_rows by month.",

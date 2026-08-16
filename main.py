@@ -33,9 +33,9 @@ def build_parser():
 
     monthly = sub.add_parser(
         "monthly",
-        help="load a monthly areajukyu CSV -- REPLACES every row of the monthly "
-             "source, not only that month's. Do not loop this until week 6 "
-             "scopes replace_rows by month.",
+        help="load a monthly areajukyu CSV -- DELETES THE WHOLE area_demand "
+             "TABLE first, daily rows included, then inserts this file. Do not "
+             "loop this until week 6 scopes replace_rows by month.",
     )
     monthly.add_argument("path", type=Path, help="path to a monthly CSV")
 

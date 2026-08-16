@@ -16,14 +16,10 @@ need it; this module keeps the constraint until it is given the same treatment.
 import csv
 import json
 import logging
-import sqlite3
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = "sql/hokkaido.db"
-DEMAND_CSV = "data/hepco_demand_2026-04.csv"
-WEATHER_JSON = "data/weather_sapporo_2026-04.json"
 KEY_COLUMN = "datetime_jst"
 AUTHORITATIVE_SOURCE = "hepco_monthly_areajukyu"
 
@@ -217,19 +213,3 @@ def load_weather(conn, path):
     logger.info("weather_hourly: inserted %s rows", len(rows))
 
 
-def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        load_demand(conn, DEMAND_CSV)
-        load_weather(conn, WEATHER_JSON)
-    finally:
-        conn.close()
-
-
-if __name__ == "__main__":
-    main()

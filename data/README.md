@@ -4,6 +4,11 @@
 Raw source files for the Hokkaido grid capstone. **Not committed** (see `.gitignore`) —
 regenerable from the sources below.
 
+**Exception — the daily jisseki track is NOT regenerable.** Both daily HEPCO
+feeds are ~2-day rolling tails. A file older than the tail cannot be re-fetched
+by any means. test_jisseki.csv is a captured artifact, not a reproducible one;
+the "regenerable" claim above covers the monthly archive and ERA5 only.
+
 ## hepco_demand_2026-04.csv
 HEPCO area supply-demand actuals (エリア需給実績), April 2026. CP932, CRLF,
 30-minute grain, MW. Local rename of `eria_jukyu_202604_01.csv`.
@@ -63,6 +68,21 @@ Endpoint: https://archive-api.open-meteo.com/v1/archive
 
 Regenerate:
     curl "https://archive-api.open-meteo.com/v1/archive?latitude=43.06&longitude=141.35&start_date=2026-04-01&end_date=2026-04-30&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation,snowfall&timezone=Asia/Tokyo" -o data/weather_sapporo_2026-04.json
+
+Grain: hourly, against half-hourly demand. Aggregate demand UP to hourly;
+do not interpolate weather down — temperature between readings is unmeasured.
+The column is MW, so hourly aggregation is a MEAN, not a SUM. Summing two
+~2600 MW readings gives a plausible ~5200 and is wrong.
+
+Spatial: one ERA5 grid cell (43.058, 141.429) standing in for area-wide
+demand. Defensible for temperature — Sapporo metro carries much of the load.
+NOT defensible for wind at rung 7: Hokkaido wind capacity is in Soya and
+Tokachi, so wind_speed_10m here is a poor proxy for area wind output.
+
+Latency: ERA5 reanalysis publishes on a delay; the daily demand feed expires
+in ~2 days. LATENCY FIGURE NOT YET VERIFIED against Open-Meteo's docs. If the
+delay exceeds the tail, the two sources cannot be fetched in one pass and
+joined immediately — forward capture must store them separately and join later.
 
 Licence: CC BY 4.0 — attribution required:
 > Open-Meteo.com, CC BY 4.0. Zippenfenig, P. (2023). Open-Meteo.com Weather API.

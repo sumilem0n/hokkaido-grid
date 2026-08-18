@@ -11,6 +11,13 @@ Run from the repo root (~/hokkaido-grid):
 The paths below are relative to the working directory, which is why that
 instruction exists. main.py anchors its paths to __file__ instead and does not
 need it; this module keeps the constraint until it is given the same treatment.
+
+Three writers, three delete scopes, and the same rule under all of them: a
+DELETE must be a subset of what the INSERT in the same transaction can supply.
+replace_rows(day=None) breaks it on purpose and says so; replace_rows(day=...)
+and load_weather both keep it by deleting only the span they are about to
+rewrite. An unscoped DELETE is never the safe default, it is the one that
+happens to be harmless while the table holds one month.
 """
 
 import csv
@@ -18,10 +25,25 @@ import json
 import logging
 from datetime import datetime, timedelta
 
+from hokkaido_grid.errors import SchemaChanged
+
 logger = logging.getLogger(__name__)
 
 KEY_COLUMN = "datetime_jst"
 AUTHORITATIVE_SOURCE = "hepco_monthly_areajukyu"
+
+# Every column parse_monthly_demand reads. The point of naming them here is that
+# every read below is a `.get()`, and a `.get()` on a renamed column returns
+# None, which _to_float turns into NULL, which loads clean. That is the 20->22
+# break, in this file. Row 3 of the table in errors.py exists for it.
+REQUIRED_DEMAND_COLUMNS = (
+    "DATE", "TIME", "エリア需要", "太陽光発電実績", "風力発電実績", "合計",
+)
+
+REQUIRED_WEATHER_KEYS = (
+    "time", "temperature_2m", "relative_humidity_2m",
+    "wind_speed_10m", "precipitation", "snowfall",
+)
 
 
 def _to_float(value):
@@ -43,6 +65,15 @@ def parse_monthly_demand(path):
     with open(path, encoding="cp932", newline="") as f:
         f.readline()                       # skip line 1: the 単位[MW平均] banner (skip exactly 1)
         reader = csv.DictReader(f)         # line 2 becomes the header
+
+        # Header check before the first row, not during. Stripped the same way
+        # the row keys are stripped below, or the '\r' on the last field name
+        # reports itself as a missing column.
+        header = [h.strip() for h in (reader.fieldnames or [])]
+        missing = [c for c in REQUIRED_DEMAND_COLUMNS if c not in header]
+        if missing:
+            raise SchemaChanged(f"{path}: header is missing {missing}; got {header}")
+
         for raw in reader:
             # strip whitespace off keys and values (guards the '\r'/trailing-space gotcha)
             row = {(k.strip() if k else k): (v.strip() if v else v)
@@ -50,7 +81,14 @@ def parse_monthly_demand(path):
             if not row.get("DATE"):        # ~48 trailing all-comma rows -> empty DATE
                 dropped += 1
                 continue
-            dt = datetime.strptime(f"{row['DATE']} {row['TIME']}", "%Y/%m/%d %H:%M")
+            try:
+                dt = datetime.strptime(f"{row['DATE']} {row['TIME']}", "%Y/%m/%d %H:%M")
+            except (KeyError, TypeError, ValueError) as exc:
+                # An unparseable row is a shape complaint, not a lost day.
+                raise SchemaChanged(
+                    f"{path}: unparseable DATE/TIME "
+                    f"{row.get('DATE')!r} {row.get('TIME')!r}"
+                ) from exc
             rows.append({
                 "datetime_jst":    dt.strftime("%Y-%m-%d %H:%M"),  # canonical: zero-padded, space
                 "demand_mw":       _to_float(row.get("エリア需要")),      # NO x10, already MW
@@ -70,6 +108,11 @@ def _prepare(table, rows, source):
     delete must be a subset of what the insert can supply. fetch() guarantees
     it raises rather than returning [], but a loader that silently accepts an
     empty list is one refactor away from being a truncation.
+
+    Still ValueError, not SchemaChanged: this is a loader invariant about its
+    own arguments, not a claim about what a source file looks like. The header
+    check in parse_monthly_demand is what speaks for the file. main()'s row-4
+    block is what stops that ValueError reaching the driver as a skip.
 
     Rows are dicts, not tuples, so the column list comes from the data and
     this stays source-agnostic: a tuple carries no column names and would need
@@ -188,7 +231,23 @@ def load_weather(conn, path):
     # Inconsistent on purpose; revisit when openmeteo.py becomes a fetcher.
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
-    h = data["hourly"]                     # parallel arrays: time[], temperature_2m[], ...
+
+    try:
+        h = data["hourly"]                 # parallel arrays: time[], temperature_2m[], ...
+    except (KeyError, TypeError) as exc:
+        raise SchemaChanged(f"{path}: no 'hourly' object") from exc
+
+    missing = [k for k in REQUIRED_WEATHER_KEYS if k not in h]
+    if missing:
+        raise SchemaChanged(f"{path}: hourly is missing {missing}")
+
+    # zip() stops at the shortest array without complaining, so a renamed or
+    # truncated series would silently shorten the month. Same failure mode as
+    # the demand header, same row of the table.
+    lengths = {k: len(h[k]) for k in REQUIRED_WEATHER_KEYS}
+    if len(set(lengths.values())) != 1:
+        raise SchemaChanged(f"{path}: hourly arrays disagree in length: {lengths}")
+
     rows = []
     for t, temp, hum, wind, prec, snow in zip(
         h["time"],
@@ -201,8 +260,26 @@ def load_weather(conn, path):
         # 'T' -> ' ' via parse+reformat, so it matches the demand key format exactly
         datetime_jst = datetime.fromisoformat(t).strftime("%Y-%m-%d %H:%M")
         rows.append((datetime_jst, temp, hum, wind, prec, snow))
+    if not rows:
+        raise ValueError("weather_hourly: refusing to run with no rows")
+
+    # Scoped, 2026-08-18. This was `DELETE FROM weather_hourly;` -- the third
+    # unscoped delete in the module, after replace_rows(day=None) and the
+    # original one it replaced. Harmless only while the table holds a single
+    # month: the first second month of ERA5 would have destroyed the first on
+    # load. The span comes from the rows being written, so the delete is a
+    # subset of what the insert supplies by construction, and the same
+    # fixed-width-ISO-TEXT ordering that scopes replace_rows scopes this.
+    # Inclusive, not half-open, because the endpoints are the keys themselves
+    # rather than a calendar boundary.
+    keys = [r[0] for r in rows]
+    first, last = min(keys), max(keys)     # min/max, not [0]/[-1]: sorted input is
+                                           # an assumption about the file, not a fact
     with conn:
-        conn.execute("DELETE FROM weather_hourly;")
+        deleted = conn.execute(
+            "DELETE FROM weather_hourly WHERE datetime_jst >= ? AND datetime_jst <= ?;",
+            (first, last),
+        ).rowcount
         conn.executemany(
             "INSERT INTO weather_hourly "
             "(datetime_jst, temperature_c, relative_humidity_pct, wind_speed_kmh, "
@@ -210,6 +287,6 @@ def load_weather(conn, path):
             "VALUES (?, ?, ?, ?, ?, ?);",
             rows,
         )
-    logger.info("weather_hourly: inserted %s rows", len(rows))
-
+    logger.info("weather_hourly: deleted %s, inserted %s (scope=%s..%s)",
+                deleted, len(rows), first, last)
 

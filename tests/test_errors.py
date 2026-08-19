@@ -21,11 +21,20 @@ TABLE_TYPES = (SourceTransientError, SourceUnavailable, SchemaChanged)
 
 
 def test_skip_does_not_catch_halt():
-    """The backfill loop's `except SourceUnavailable: continue` must miss row 3."""
+    """SchemaChanged is not a subclass of SourceUnavailable, so no
+    `except SourceUnavailable` can catch it.
+
+    Asserted through an except block rather than through issubclass so that
+    the failure message names the consequence: the backfill loop is written
+    `except SourceUnavailable: continue`, and a subclass relationship would
+    make it swallow row 3. That loop is not exercised here -- this is a fact
+    about the two classes, and it protects the loop only for as long as the
+    loop still catches SourceUnavailable and not something wider.
+    """
     with pytest.raises(SchemaChanged):
         try:
             raise SchemaChanged("header moved")
-        except SourceUnavailable:                      # the loop's block, verbatim
+        except SourceUnavailable:                      # the shape the loop uses
             pytest.fail("skip caught halt: SchemaChanged is a subclass again")
 
 

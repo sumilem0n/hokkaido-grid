@@ -1,4 +1,3 @@
-
 # Data dictionary — hokkaido-grid
 
 ## Grain decision (Option A — store native, bridge at query time)
@@ -77,6 +76,9 @@ Column inventory (index -> field). Kept columns marked [x]; the rest exist and c
 
 ## Canonical key
 - datetime_jst: TEXT 'YYYY-MM-DD HH:MM', JST. area_demand at :00 and :30; weather_hourly at :00 only.
+- area_demand rows are keyed on (datetime_jst, source), not datetime_jst alone. The same half-hour
+  legitimately appears twice — once from the daily feed, once from the corrected monthly file. See
+  "Decision — wind/solar schema and primary key".
 
 
 ## Daily source verification — 2026-08-01
@@ -195,23 +197,87 @@ trough. Every wrong unit convention lands outside: raw kWh ~1.2e6,
 double-converted ~5–8, 万kW ~250–400 or ~24000–40000. Observed daily file
 checks out: 1193000 ÷ 500 = 2386 MW at 00:00.
 
-## Decision — wind/solar schema, 19 Aug 2026
+## Decision — wind/solar schema and primary key, 19 Aug 2026
 
-Chosen: Option B on columns (keep wind_mw and solar_mw separate; combine in the query via CASE source). Option C on the key (PRIMARY KEY (datetime_jst, source)).
+A standing decision about the area_demand schema, not a note about one source.
+
+Two separate choices below: how renewable output is laid out in columns, and what the
+primary key is. The options are numbered rather than lettered, because "Option A" already
+means the grain decision at the top of this file and a reader six weeks out should not be
+able to read a rejection here as if it applied to the grain.
+
+### Columns — chosen: column option 3, split plus derived total
+
+Three columns: `wind_mw`, `solar_mw`, `wind_solar_mw`.
+
+- Monthly rows carry all three. `wind_mw` and `solar_mw` come from cols 15 and 13; the
+  loader writes their sum to `wind_solar_mw`.
+- Daily rows carry `wind_solar_mw` only, from エリア風力・太陽光発電量 (kWh ÷ 500).
+  `wind_mw` and `solar_mw` are NULL on every daily row, permanently. That NULL means
+  "this source does not publish the split", not "not loaded yet" — nothing will ever fill it.
 
 Costed rejections:
 
-Option A — store only the combined wind_solar_mw. The loader adds wind and solar before insert and keeps only the total, which is a one-way operation. 50 + 30 and 70 + 10 both land in the table as 80, and no query can tell them apart afterward. Recovering the split means a schema migration, re-fetching every monthly CSV in the backfill, and a full re-ingest. The sum is derivable from the parts on demand; the parts are never derivable from the sum. This also forecloses rung 7 (curtailment against wind specifically), which needs wind_mw alone.
+Column option 1 — store only the combined `wind_solar_mw` on both tracks. The loader adds
+wind and solar before insert and keeps only the total, which is a one-way operation. 50 + 30
+and 70 + 10 both land in the table as 80, and no query can tell them apart afterward.
+Recovering the split means a schema migration, re-fetching every monthly CSV in the backfill,
+and a full re-ingest. The sum is derivable from the parts on demand; the parts are never
+derivable from the sum. This also forecloses rung 7 (curtailment against wind specifically),
+which needs `wind_mw` alone.
 
-Single-column PK on datetime_jst. One timestamp admits one row, so a daily row and a monthly row for the same half-hour cannot coexist. The Q1 agreement check becomes unaskable — the self-join collapses both sides onto the same row and then requires it to carry two sources at once, so no data state satisfies it. Worse than unaskable: it fails silently. The query returns zero rows whether the sources agree or whether the comparison was never possible, and those two outcomes are indistinguishable at the point of reading. Load-time behaviour is equally lossy — the monthly backfill reaching an already-captured timestamp either aborts on the unique constraint or overwrites the daily row, destroying the comparison in the act of setting it up.
+Column option 2 — split columns only, no `wind_solar_mw`. The daily track publishes a combined
+figure and nothing else, so under a two-column schema it has nowhere to put it: the value is
+parsed and thrown away, and both renewable columns are NULL on every daily row. Rung 7 survives
+(it draws on the monthly track alone), but the agreement check that the composite key exists to
+make possible is then limited to total demand. The one renewable number the daily feed actually
+publishes cannot be compared against the corrected monthly record, and the discrepancy that
+check is meant to catch — a daily capture that disagrees with the archive on renewables — stays
+invisible. Option 2 avoids the self-contradiction risk described below and buys nothing else.
 
-Consequences:
+Cost of option 3, accepted: on monthly rows `wind_solar_mw` is derived from two other columns
+in the same row, so the row can contradict itself if a loader bug lands. A CHECK ties them
+together rather than leaving the derived column free:
 
-Loaders take an ON CONFLICT (datetime_jst, source) target; bare INSERT OR REPLACE is now unsafe and banned.
-Every DELETE and UPDATE must be scoped by source, not timestamp range alone.
-Both loaders rewritten: monthly stops summing at load, daily writes wind_solar_mw only.
-A precedence view (monthly wins over daily where both exist) is required for reporting, since the table now legitimately holds duplicate timestamps.
-Q1 must ship with a half_hours_compared count so an empty disagreement set is readable as a pass rather than a no-op.
+    CHECK (
+      source <> 'monthly'
+      OR wind_solar_mw IS NULL
+      OR wind_mw IS NULL
+      OR solar_mw IS NULL
+      OR abs(wind_solar_mw - (wind_mw + solar_mw)) < 0.05
+    )
 
-Re-ask trigger: the monthly archive gaining a published combined column, or the daily feed gaining a wind/solar split. Either collapses the source→column asymmetry that the CASE currently keys on, at which point the combine rule should be re-derived rather than patched. A third source (JEPX, OCCTO) is a weaker trigger for the column question but forces re-examination of the precedence view.
+Tolerance rather than equality because the source carries one decimal place and the columns are
+REAL; 0.05 sits below the resolution of the data and above binary float noise. The constraint is
+scoped to monthly rows because on daily rows `wind_solar_mw` is not derived from anything — it is
+the measurement, and the two split columns are legitimately NULL.
 
+### Primary key — chosen: composite, `PRIMARY KEY (datetime_jst, source)`
+
+Costed rejection:
+
+Single-column PK on `datetime_jst`. One timestamp admits one row, so a daily row and a monthly
+row for the same half-hour cannot coexist. The Q1 agreement check becomes unaskable — the
+self-join collapses both sides onto the same row and then requires it to carry two sources at
+once, so no data state satisfies it. Worse than unaskable: it fails silently. The query returns
+zero rows whether the sources agree or whether the comparison was never possible, and those two
+outcomes are indistinguishable at the point of reading. Load-time behaviour is equally lossy —
+the monthly backfill reaching an already-captured timestamp either aborts on the unique
+constraint or overwrites the daily row, destroying the comparison in the act of setting it up.
+
+### Consequences
+
+- Loaders take an `ON CONFLICT (datetime_jst, source)` target; bare `INSERT OR REPLACE` is now
+  unsafe and banned.
+- Every DELETE and UPDATE must be scoped by source, not timestamp range alone.
+- Both loaders rewritten: monthly keeps `wind_mw` and `solar_mw` separate and additionally writes
+  their sum to `wind_solar_mw`; daily writes `wind_solar_mw` only and leaves both split columns NULL.
+- A precedence view (monthly wins over daily where both exist) is required for reporting, since the
+  table now legitimately holds duplicate timestamps.
+- Q1 compares `demand_mw` and `wind_solar_mw` across the two sources. `wind_solar_mw` is the column
+  that makes the renewable half of that check answerable at all, and is the reason option 3 was taken
+  over option 2.
+- Q1 must ship with a `half_hours_compared` count so an empty disagreement set is readable as a pass
+  rather than a no-op.
+- Rung 7 (curtailment against wind specifically) reads `wind_mw` from monthly rows only and ignores
+  `wind_solar_mw` entirely.

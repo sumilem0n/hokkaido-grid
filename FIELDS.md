@@ -194,3 +194,24 @@ the sample is one shoulder-season month with no winter peak or summer
 trough. Every wrong unit convention lands outside: raw kWh ~1.2e6,
 double-converted ~5–8, 万kW ~250–400 or ~24000–40000. Observed daily file
 checks out: 1193000 ÷ 500 = 2386 MW at 00:00.
+
+### Decision — wind/solar schema, 19 Aug 2026
+
+Chosen: Option B on columns (keep wind_mw and solar_mw separate; combine in the query via CASE source). Option C on the key (PRIMARY KEY (datetime_jst, source)).
+
+Costed rejections:
+
+Option A — store only the combined wind_solar_mw. The loader adds wind and solar before insert and keeps only the total, which is a one-way operation. 50 + 30 and 70 + 10 both land in the table as 80, and no query can tell them apart afterward. Recovering the split means a schema migration, re-fetching every monthly CSV in the backfill, and a full re-ingest. The sum is derivable from the parts on demand; the parts are never derivable from the sum. This also forecloses rung 7 (curtailment against wind specifically), which needs wind_mw alone.
+
+Single-column PK on datetime_jst. One timestamp admits one row, so a daily row and a monthly row for the same half-hour cannot coexist. The Q1 agreement check becomes unaskable — the self-join collapses both sides onto the same row and then requires it to carry two sources at once, so no data state satisfies it. Worse than unaskable: it fails silently. The query returns zero rows whether the sources agree or whether the comparison was never possible, and those two outcomes are indistinguishable at the point of reading. Load-time behaviour is equally lossy — the monthly backfill reaching an already-captured timestamp either aborts on the unique constraint or overwrites the daily row, destroying the comparison in the act of setting it up.
+
+Consequences:
+
+Loaders take an ON CONFLICT (datetime_jst, source) target; bare INSERT OR REPLACE is now unsafe and banned.
+Every DELETE and UPDATE must be scoped by source, not timestamp range alone.
+Both loaders rewritten: monthly stops summing at load, daily writes wind_solar_mw only.
+A precedence view (monthly wins over daily where both exist) is required for reporting, since the table now legitimately holds duplicate timestamps.
+Q1 must ship with a half_hours_compared count so an empty disagreement set is readable as a pass rather than a no-op.
+
+Re-ask trigger: the monthly archive gaining a published combined column, or the daily feed gaining a wind/solar split. Either collapses the source→column asymmetry that the CASE currently keys on, at which point the combine rule should be re-derived rather than patched. A third source (JEPX, OCCTO) is a weaker trigger for the column question but forces re-examination of the precedence view.
+

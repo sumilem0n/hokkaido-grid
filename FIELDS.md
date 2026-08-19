@@ -195,7 +195,7 @@ trough. Every wrong unit convention lands outside: raw kWh ~1.2e6,
 double-converted ~5–8, 万kW ~250–400 or ~24000–40000. Observed daily file
 checks out: 1193000 ÷ 500 = 2386 MW at 00:00.
 
-### Decision — wind/solar schema, 19 Aug 2026
+## Decision — wind/solar schema, 19 Aug 2026
 
 Chosen: Option B on columns (keep wind_mw and solar_mw separate; combine in the query via CASE source). Option C on the key (PRIMARY KEY (datetime_jst, source)).
 

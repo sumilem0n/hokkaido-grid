@@ -240,17 +240,37 @@ in the same row, so the row can contradict itself if a loader bug lands. A CHECK
 together rather than leaving the derived column free:
 
     CHECK (
-      source <> 'monthly'
-      OR wind_solar_mw IS NULL
-      OR wind_mw IS NULL
-      OR solar_mw IS NULL
-      OR abs(wind_solar_mw - (wind_mw + solar_mw)) < 0.05
+      source <> 'hepco_monthly_areajukyu'
+      OR (
+        wind_mw       IS NOT NULL
+        AND solar_mw       IS NOT NULL
+        AND wind_solar_mw  IS NOT NULL
+        AND abs(wind_solar_mw - (wind_mw + solar_mw)) < 0.05
+      )
     )
 
 Tolerance rather than equality because the source carries one decimal place and the columns are
 REAL; 0.05 sits below the resolution of the data and above binary float noise. The constraint is
 scoped to monthly rows because on daily rows `wind_solar_mw` is not derived from anything — it is
 the measurement, and the two split columns are legitimately NULL.
+
+The source literal is the exact string the loader writes, `'hepco_monthly_areajukyu'`, not the
+shorthand "monthly" used in prose throughout this file. A CHECK against a literal no row ever
+carries is a constraint that passes on every row, which is indistinguishable from no constraint
+at all until someone reads the schema.
+
+NULL semantics, decided rather than left open: on monthly rows all three columns are required to
+be present. There is deliberately no `IS NULL` escape. SQLite treats a CHECK evaluating to NULL as
+satisfied, so escapes would let a monthly row carry `wind_solar_mw` with `wind_mw` missing and pass
+— a derived total with no parts, which is column option 1's failure mode reappearing one row at a
+time and passing the constraint that exists to catch it. Requiring all three means a monthly row
+with a blank in col 13 or 15 aborts the insert instead of loading half-formed. If HEPCO ever
+publishes such a blank, that abort is how we find out, in the same spirit as `ROWS_PER_DAY = 47`
+being asserted exactly rather than as a floor.
+
+This constraint is only sound while `source` is `NOT NULL`. A NULL source makes `source <> '...'`
+evaluate to NULL, which SQLite treats as satisfied, so the whole CHECK passes on any row with a NULL
+source. Relaxing that column silently disables this constraint rather than loosening it.
 
 ### Primary key — chosen: composite, `PRIMARY KEY (datetime_jst, source)`
 
@@ -281,3 +301,161 @@ constraint or overwrites the daily row, destroying the comparison in the act of 
   rather than a no-op.
 - Rung 7 (curtailment against wind specifically) reads `wind_mw` from monthly rows only and ignores
   `wind_solar_mw` entirely.
+
+## Decision — gap alerting and acknowledgement, 21 Aug 2026
+
+A standing decision about how `gaps` reports, not a note about one source.
+
+Options are lettered A/B/C here and scoped to alerting. "Option A" at the top of this file is the
+grain decision and the wind/solar entry numbers its options for the same reason; a reader six weeks
+out should not be able to read alert option A as either of those.
+
+### Scope of the detector
+
+`gaps` covers the daily jisseki track only — rows with `source = 'hepco_daily_jisseki'`. Everything
+below about recoverable and permanent applies to that track and no other. If the loader writes a
+different literal, fix it here first, for the same reason as the monthly literal in the wind/solar
+CHECK.
+
+Two exclusions, both of which would otherwise produce mail every night forever:
+
+- The monthly track is not a gap source. A month not yet loaded is a backlog item, not a loss:
+  the archive does not expire on a two-day clock, and there is no moment at which a missing month
+  becomes unrecoverable. Treating monthly absence as gaps at day grain would mail 28–31 times for
+  a single unloaded month, which is alert option A's failure mode arriving on day one.
+- The 23:30–24:00 half-hour is never a daily gap. The daily file is finalised before its last
+  period closes, so a complete daily capture is 47 rows and that period always comes from monthly.
+  A detector working at half-hour grain without this exclusion reports one gap per day, forever,
+  on a pipeline that is working correctly.
+
+"Recoverable" is per source, not per date. The same date can be permanently gone from the daily
+track and still pending from monthly, and those two facts are unrelated. Hence `gap_ack` is keyed
+on (gap_date, source): acknowledging a permanent daily loss must not silence anything on the
+monthly side.
+
+### The window is one night, not two
+
+From the retention measurements above: on day X the daily file for X−1 returns 200 and the file for
+X−2 returns 404. `RETENTION_DAYS = 2` counts today and yesterday, which is one fetchable day behind
+the current one, not two.
+
+So for a missing day D:
+
+| run          | age of D | state           |
+|--------------|----------|-----------------|
+| night of D+1 | 1        | recoverable     |
+| night of D+2 | 2        | newly permanent |
+| night of D+3 | 3+       | permanent       |
+
+Exactly one nightly run ever sees D as recoverable. There is no second look — the run that mails
+"this is still fixable" is the only run that will ever say so, and the window closes before the next
+one. This is the arithmetic behind the two states; the states themselves are unchanged:
+
+- Recoverable — the fetch can still be re-run, for the remainder of that one day.
+- Permanent — the file is gone from HEPCO, nothing recovers it. There is no degraded or partial
+  recovery between the two.
+
+`gaps` runs nightly under cron; a non-zero exit mails. The decision is which of those two states
+mails.
+
+### Alerting — chosen: alert option C, mail through the transition, then acknowledge
+
+One small table of gaps seen and accepted. The rule: mail while a gap is recoverable, mail again
+when it crosses into permanent and every night after that until it is acknowledged, then silent
+forever.
+
+    CREATE TABLE gap_ack (
+      gap_date TEXT NOT NULL,     -- 'YYYY-MM-DD', JST
+      source   TEXT NOT NULL,
+      acked_at TEXT NOT NULL,
+      PRIMARY KEY (gap_date, source)
+    );
+
+Mailing until acknowledged rather than exactly once at the crossing, because a single crossing mail
+is exactly as losable as the recoverable mails that preceded it — same inbox, same unchecked folder,
+same broken cron. An option that announces a permanent loss once and then goes quiet on its own is
+option B with the silence moved one night later. Only a human action ends the mail, so the mail
+cannot end by accident. The noise is bounded because acknowledging is one command, and it is bounded
+in a way A's is not: A's floor rises forever with no action available to lower it.
+
+What this buys is a distinction the other two options cannot express: "8 August, known, already
+mourned, don't tell me again" versus "a day just died last night and you didn't catch it". Under C
+those are a silent night and a mailed night. Silence then means nothing new was lost — a claim
+silence can only make if every loss is noisy until answered.
+
+Costed rejections:
+
+Alert option A — mail in both states. Every night, forever, a mail about 8 August, a day nothing can
+fix. The permanent set only grows, so the noise floor only rises. Two weeks in the mail goes
+unopened, and the night it finally carries a recoverable gap — the one night it was worth reading,
+and with the corrected arithmetic there is only ever one — it is not read. The failure is not that A
+is noisy; it is that A trains the reader to ignore the channel, which disables the recoverable alert
+too. An alert that is reliably ignored is worse than no alert, because the absence of an alerting
+system at least does not feel like coverage.
+
+Alert option B — mail only while a gap is recoverable. Sensible, and what most people would build.
+The hole is what happens when nobody is reading. A gap opens Saturday; B mails once, on the Sunday
+run; the mail lands in an unchecked folder, or cron itself is broken, or it is a long weekend. By
+the Monday run the day has aged past the window, and B goes quiet — it now classes the day as
+unfixable, and unfixable things do not mail. So the moment the loss becomes irreversible, the single
+most important thing that happened all week, produces silence. B is loudest when the problem is
+smallest and stops exactly when the damage becomes permanent. Afterwards nothing anywhere records
+that a permanent loss occurred; there is only a day quietly absent from the database,
+indistinguishable on inspection from a day that was never expected. Under B, "no mail last night"
+and "a day died last night" are the same observation.
+
+Cost of option C, accepted: one table, one state transition, one flag or subcommand to acknowledge,
+and one test asserting that a gap passes recoverable → newly-permanent → acknowledged without ever
+going quiet in the middle step. With a one-night window that test is three runs, not four: run 1
+mails recoverable, run 2 mails the crossing, run 3 after acknowledgement is silent. It should also
+assert that run 3 without the acknowledgement still mails, since that is the clause separating C
+from B. The middle step is the one B drops, so it is the one that has to be pinned. About 25
+minutes, next week; today is the PK migration and the loaders.
+
+### Consequences
+
+- `gaps` exits non-zero for any daily-track gap not present in `gap_ack`, regardless of state, and
+  zero once it is acknowledged. State changes the message, not the exit code.
+- The crossing mail is a distinct message from the recoverable one — it reports a loss, not a task.
+  Reading them as the same alert reintroduces B's ambiguity at the human end.
+- Acknowledgement is an explicit action taken by a person. Nothing in the pipeline writes `gap_ack`
+  automatically; an auto-ack on age is alert option B with extra steps.
+- `gap_ack` is the only record in the project that a permanent loss happened on a given date. Treat
+  it as data, not as alert state: it belongs in backup, and rows are never deleted.
+- Silence from `gaps` is now load-bearing. Any future change that suppresses an unacknowledged gap —
+  a rate limit, a digest, a severity filter — breaks the claim silence makes and needs this entry
+  read first.
+
+### Open
+
+- "Recoverable" assumes the nightly run lands inside the one-day window. That depends on the cron
+  schedule, which is decided at rung 4 on Sunday — a run time that drifts past the retention
+  boundary collapses the recoverable state to zero runs and makes every gap a crossing.
+- Acknowledgement must refuse a gap that is still recoverable. Acking a fixable day converts it to a
+  permanent one by hand.
+
+## Decision — A2, retain raw bytes, 21 Aug 2026
+
+The pipeline parses and discards. On a two-day feed that means a mapping bug can never be re-parsed
+against what actually arrived — the hole we were standing in during the NULL-column diagnosis.
+Fetchers now write the raw response to `data/raw/` gzipped before parsing.
+
+Four pins:
+
+- **Write before parse.** Fetch → write raw → parse. If the parse raises, the bytes are already on
+  disk. Writing after a successful parse retains exactly the files that were never needed.
+- **Filename is `{source}_{period}_{captured_at}.csv.gz`.** The monthly archive is retroactively
+  corrected without notice, so `202607` fetched in August and `202607` fetched in December are two
+  different files and the second must not overwrite the first. Capture date is provenance, not
+  decoration.
+- **Retain as received, before decoding.** Bytes, not text — the CP932 decode happens downstream of
+  the write. This also means a failed fetch retains its UTF-8 404 HTML, which is the artifact that
+  explains why a day is missing.
+- **This does not fix `data/` being gitignored.** Raw retention protects against a parser bug and
+  does nothing about a dead laptop. The off-machine copy is a separate open item in data/README.md
+  and stays open.
+
+Also, unrelated to any rung: line 1 of the jisseki file carries HEPCO's own file-update timestamp,
+currently skipped. It is the only provenance the source volunteers — capture it.
+
+Pruning: none yet. A daily CSV is single-digit KB.

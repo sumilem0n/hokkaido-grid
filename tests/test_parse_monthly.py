@@ -30,12 +30,18 @@ DATA_ROWS = (
 )
 
 EXPECTED = [
+    # wind_solar_mw is written as the sum rather than as a literal: it is the
+    # rule the loader implements, not a number that happens to match. Short
+    # enough to be a specification rather than a reimplementation -- if it grew
+    # into real arithmetic it would become the code agreeing with itself, which
+    # is the trap the parametrize list below is written out by hand to avoid.
     {"datetime_jst": "2026-04-01 00:00", "demand_mw": 2450.5,
-     "solar_mw": 0.0, "wind_mw": 120.3, "supply_total_mw": 2570.8},
+     "solar_mw": 0.0, "wind_mw": 120.3, "wind_solar_mw": 0.0 + 120.3,
+     "supply_total_mw": 2570.8},
     {"datetime_jst": "2026-04-01 00:30", "demand_mw": 2380.1,
-     "solar_mw": 0.0, "wind_mw": 118.7, "supply_total_mw": 2498.8},
+     "solar_mw": 0.0, "wind_mw": 118.7, "wind_solar_mw": 0.0 + 118.7,
+     "supply_total_mw": 2498.8},
 ]
-
 
 def write_demand_csv(tmp_path, *, drop_column=None, data_rows=DATA_ROWS):
     """Write one manufactured monthly file into tmp_path and return its path.

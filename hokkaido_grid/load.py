@@ -12,12 +12,18 @@ The paths below are relative to the working directory, which is why that
 instruction exists. main.py anchors its paths to __file__ instead and does not
 need it; this module keeps the constraint until it is given the same treatment.
 
-Three writers, three delete scopes, and the same rule under all of them: a
-DELETE must be a subset of what the INSERT in the same transaction can supply.
-replace_rows(day=None) breaks it on purpose and says so; replace_rows(day=...)
-and load_weather both keep it by deleting only the span they are about to
-rewrite. An unscoped DELETE is never the safe default, it is the one that
-happens to be harmless while the table holds one month.
+Three writers, three delete scopes, and one rule under all of them: a DELETE
+must be a subset of the key range the INSERT in the same transaction
+authoritatively owns. Amended 2026-08-21, from "a subset of what the INSERT can
+supply" -- month-scoped replace_rows deliberately deletes a period the insert
+may not refill, because a retracted period is exactly the ghost row this writer
+exists to collect. load_weather keeps the stricter form (its span is derived
+from the rows themselves) and merge_rows deletes nothing at all.
+
+Since the composite key (datetime_jst, source) landed on 2026-08-21, every
+DELETE here is also scoped by source. Two tracks legitimately hold the same
+half-hour, so a time-only DELETE destroys the other track -- the unscoped-delete
+bug wearing the fix that was supposed to end it.
 """
 
 import csv
@@ -30,6 +36,10 @@ from hokkaido_grid.errors import SchemaChanged
 logger = logging.getLogger(__name__)
 
 KEY_COLUMN = "datetime_jst"
+# The full primary key as of the 2026-08-21 migration. ON CONFLICT targets must
+# name this exact column set; see FIELDS.md, "Decision — wind/solar schema and
+# primary key, 19 Aug 2026".
+KEY_COLUMNS = ("datetime_jst", "source")
 AUTHORITATIVE_SOURCE = "hepco_monthly_areajukyu"
 
 # Every column parse_monthly_demand reads. The point of naming them here is that
@@ -89,11 +99,27 @@ def parse_monthly_demand(path):
                     f"{path}: unparseable DATE/TIME "
                     f"{row.get('DATE')!r} {row.get('TIME')!r}"
                 ) from exc
+            solar = _to_float(row.get("太陽光発電実績"))
+            wind = _to_float(row.get("風力発電実績"))
             rows.append({
                 "datetime_jst":    dt.strftime("%Y-%m-%d %H:%M"),  # canonical: zero-padded, space
                 "demand_mw":       _to_float(row.get("エリア需要")),      # NO x10, already MW
-                "solar_mw":        _to_float(row.get("太陽光発電実績")),
-                "wind_mw":         _to_float(row.get("風力発電実績")),
+                "solar_mw":        solar,
+                "wind_mw":         wind,
+                # Derived, not read: the monthly file publishes the two parts and
+                # no total, while the daily file publishes the total and no parts.
+                # wind_solar_mw is the one column both tracks can fill, which is
+                # what makes the two-track agreement check answerable on
+                # renewables at all. Not in REQUIRED_DEMAND_COLUMNS: nothing is
+                # read for it.
+                #
+                # None when either part is missing, because None + float raises.
+                # The *rule* -- that a monthly row may not carry a total without
+                # its parts -- is enforced by the schema's monthly-scoped CHECK,
+                # not here. A blank in col 13 or 15 therefore aborts the load
+                # rather than storing a half-formed row, in the same spirit as
+                # ROWS_PER_DAY = 47 being asserted exactly rather than as a floor.
+                "wind_solar_mw":   None if (solar is None or wind is None) else solar + wind,
                 "supply_total_mw": _to_float(row.get("合計")),
             })
     return rows, dropped
@@ -140,39 +166,71 @@ def _insert(conn, table, columns, payload, tail=""):
     return conn.executemany(sql, payload).rowcount
 
 
+def _month_window(rows):
+    """The half-open [start, end) span of the single calendar month in `rows`.
+
+    datetime_jst is fixed-width ISO TEXT, so the first seven characters are the
+    month and no parsing is needed to group by it. Raising on more than one
+    month is the guard that keeps the DELETE honest: a mixed-month payload
+    would make "the month being replaced" ambiguous, and the loader would pick
+    one and quietly orphan the rest.
+    """
+    months = {r[KEY_COLUMN][:7] for r in rows}
+    if len(months) != 1:
+        raise ValueError(f"month scope needs exactly one month, got {sorted(months)}")
+    scope = months.pop()
+    year, mon = int(scope[:4]), int(scope[5:7])
+    start = f"{scope}-01 00:00"
+    end = (f"{year + 1}-01-01 00:00" if mon == 12
+           else f"{year}-{mon + 1:02d}-01 00:00")
+    return scope, start, end
+
+
 def replace_rows(conn, table, rows, source, *, day=None):
-    """Insert dict-rows into `table`, replacing what is already there.
+    """Insert dict-rows into `table`, replacing this source's rows in one span.
 
     Scope is the caller's decision because only the caller knows its cadence.
-    day=None replaces the whole table -- the monthly track's full reload.
-    day=<date> replaces one day, which is what forward capture needs. Running
-    the daily fetch through a whole-table DELETE would have wiped every other
-    day in the table; same idempotency guarantee, two scopes.
+    day=None replaces one calendar month, derived from the rows -- the monthly
+    track's reload. day=<date> replaces one day, which is what forward capture
+    needs.
 
-    day=None will not survive the backfill: 28 monthly files loaded one at a
-    time would each wipe the previous 27. Week 6 needs a month-scoped window,
-    and merge_rows depends on it -- that reload is what collects the ghost
-    rows merge cannot delete.
+    Two things scope the DELETE, and both are load-bearing:
+
+    Time. Month-scoping landed 2026-08-21 and unblocks the 28-file backfill:
+    the previous whole-table DELETE would have had each file wipe the previous
+    27. It is also the ghost collector merge_rows depends on -- a retracted
+    period leaves a row merge cannot delete, and the month window is what
+    finally removes it. Note this deliberately breaks the stricter form of the
+    module rule: the window can be larger than what the insert refills, and for
+    a retraction that is the entire point.
+
+    Source. Mandatory since the composite key, not defensive. Under
+    (datetime_jst, source) a daily row and a monthly row legitimately share a
+    timestamp, so a DELETE filtered on time alone destroys the other track --
+    and the daily track is the unrecoverable one.
     """
     columns, payload = _prepare(table, rows, source)
 
+    if day is None:
+        scope, start, end = _month_window(rows)
+    else:
+        # Half-open window. datetime_jst is fixed-width ISO TEXT, so
+        # lexicographic order is chronological order -- the property that
+        # made the TEXT key safe, leaned on here and in _month_window.
+        scope = day.isoformat()
+        start = f"{scope} 00:00"
+        end = f"{(day + timedelta(days=1)).isoformat()} 00:00"
+
     with conn:                             # one transaction: DELETE + INSERT together
-        if day is None:
-            deleted = conn.execute(f"DELETE FROM {table};").rowcount
-        else:
-            # Half-open window. datetime_jst is fixed-width ISO TEXT, so
-            # lexicographic order is chronological order -- the property that
-            # made the TEXT primary key safe, leaned on here for the first time.
-            start = f"{day.isoformat()} 00:00"
-            end = f"{(day + timedelta(days=1)).isoformat()} 00:00"
-            deleted = conn.execute(
-                f"DELETE FROM {table} WHERE datetime_jst >= ? AND datetime_jst < ?;",
-                (start, end),
-            ).rowcount
+        deleted = conn.execute(
+            f"DELETE FROM {table} "
+            "WHERE source = ? AND datetime_jst >= ? AND datetime_jst < ?;",
+            (source, start, end),
+        ).rowcount
         _insert(conn, table, columns, payload)
 
     logger.info("%s: deleted %s, inserted %s (%s, scope=%s)",
-                table, deleted, len(payload), source, day or "all")
+                table, deleted, len(payload), source, scope)
 
 
 def merge_rows(conn, table, rows, source):
@@ -183,43 +241,42 @@ def merge_rows(conn, table, rows, source):
     the 23:30 row it cannot supply came from the monthly file and has to
     survive the run.
 
-    Precedence lives in the SQL, not in the schedule. Monthly overwrites
-    daily; daily never overwrites monthly; either source refreshing its own
-    rows always wins. Order-independent, so backfill order and cron drift
-    converge on the same table.
+    Cross-source precedence used to live here, in a WHERE on the DO UPDATE.
+    It is gone as of 2026-08-21 and this is the reason: under the composite key
+    a conflict can only occur when the two rows carry the same source, so the
+    guard was unreachable. Monthly no longer overwrites daily because the two
+    no longer collide -- they coexist, which is what the fork was for. Query-time
+    precedence now belongs to a view, in one place, rather than to the loader.
+
+    What survives is the idempotency guarantee: re-running a source over its own
+    rows refreshes them and writes nothing new.
 
     Nothing here deletes, so the table can only grow. Ghost rows -- a
     retraction, a corrected short file -- die at month grain when the
-    month-scoped replace_rows reloads over them. Week 6, before the 30 Aug
-    backfill; without it there is no collector.
+    month-scoped replace_rows reloads over them.
     """
     columns, payload = _prepare(table, rows, source)
     if KEY_COLUMN not in columns:
         raise ValueError(f"{table}: merge needs {KEY_COLUMN} to resolve conflicts")
 
-    # Update every column the rows carry, except the key -- setting the key
-    # to itself is a no-op. AUTHORITATIVE_SOURCE and the column names are
-    # module constants and schema, not input; same reason table is already
-    # interpolated. Parameterising the constant would append it to all 47
-    # payload tuples for no gain. The values stay parameterised.
+    # Update every column the rows carry except the key columns -- setting a key
+    # to itself is a no-op. The conflict target must name the key's column set
+    # exactly or SQLite raises, which is the behaviour wanted: a schema change
+    # that moves the key should stop the loader, not be absorbed by it.
     assignments = ", ".join(f"{c} = excluded.{c}"
-                            for c in columns + ["source"] if c != KEY_COLUMN)
-    tail = (
-        f" ON CONFLICT({KEY_COLUMN}) DO UPDATE SET {assignments}"
-        f" WHERE excluded.source = '{AUTHORITATIVE_SOURCE}'"
-        f" OR {table}.source = excluded.source"
-    )
+                            for c in columns if c not in KEY_COLUMNS)
+    tail = f" ON CONFLICT({', '.join(KEY_COLUMNS)}) DO UPDATE SET {assignments}"
 
     with conn:
         written = _insert(conn, table, columns, payload, tail)
 
-    logger.info("%s: %s of %s rows written, %s left to a better source (%s, merge)",
-                table, written, len(payload), len(payload) - written, source)
+    logger.info("%s: %s of %s rows written (%s, merge)",
+                table, written, len(payload), source)
 
 
 def load_demand(conn, path):
     rows, dropped = parse_monthly_demand(path)
-    replace_rows(conn, "area_demand", rows, "hepco_monthly_areajukyu")
+    replace_rows(conn, "area_demand", rows, AUTHORITATIVE_SOURCE)
     logger.info("area_demand: dropped %s blank rows", dropped)
 
 
@@ -289,4 +346,3 @@ def load_weather(conn, path):
         )
     logger.info("weather_hourly: deleted %s, inserted %s (scope=%s..%s)",
                 deleted, len(rows), first, last)
-

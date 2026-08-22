@@ -13,8 +13,8 @@ File shape observed 2026-08-03 (for 2026-08-02):
     line 4  20260802,1,0:00,0:30,1193000,1338500,165000
 
 Two banner lines, then the header. Dates are %Y%m%d with no separators, not
-the slashed form the plan assumed. The demand column carries its unit in the
-name -- see _resolve_demand_col.
+the slashed form the plan assumed. Both measurement columns carry their unit
+in the name -- see _resolve_col.
 
 That same file was generated at 23:42:44 and uploaded at 23:59:03, before its
 last period (時間コマ 48, 23:30-24:00) had closed, and was never rewritten. The
@@ -22,6 +22,12 @@ row exists with its date, index and both boundary times filled in and all
 three measurement columns empty, at every age the file was reachable. So a
 complete daily file is 47 rows, not 48, and the missing period comes from the
 monthly file. Retention is two days: today and yesterday, one shot per day.
+
+エリア総発電量(kWh) is in the header and deliberately NOT mapped (2026-08-22).
+It is total area generation; area_demand.supply_total_mw is the monthly file's
+合計 (col 21), a different quantity. Mapping one into the other would make a
+column mean two things depending on which loader wrote the row -- the same
+failure the wind/solar fork was decided to avoid. Recorded in FIELDS.md.
 """
 
 import csv
@@ -31,7 +37,7 @@ import re
 
 import requests
 
-from hokkaido_grid.errors import SourceTransientError, SourceUnavailable  
+from hokkaido_grid.errors import SourceTransientError, SourceUnavailable
 
 BASE_URL = "https://denkiyoho.hepco.co.jp/area/data/{stamp}_hokkaido_jisseki.csv"
 
@@ -58,6 +64,12 @@ DATE_FORMAT = "%Y%m%d"
 # two-day tail costs a day that cannot be refetched.
 DEMAND_PREFIX = "エリア総需要量"
 DEMAND_UNIT = "kWh"
+
+# The daily file publishes wind and solar SUMMED into one column; the monthly
+# file publishes them separately. Same prefix/unit treatment as demand, and
+# the same equality-not-membership rule in _resolve_col.
+WIND_SOLAR_PREFIX = "エリア風力・太陽光発電量"
+WIND_SOLAR_UNIT = "kWh"
 
 # The parenthesised unit at the tail of a header name, half- or full-width.
 _UNIT_SUFFIX = re.compile(r"[(（]\s*([^)）]+?)\s*[)）]\s*$")
@@ -95,12 +107,24 @@ KWH_PER_30MIN_TO_MW = 500.0  # E[kWh] / 0.5 h = kW; / 1000 = MW
 MIN_MW = 1500.0
 MAX_MW = 6000.0
 
+# Floor is 0.0, not a demand-style lower bound: wind and solar legitimately
+# produce nothing. That costs the second unit guard. A double-converted value
+# lands near 2 MW -- inside this band -- where the same error on demand lands
+# at ~5 and is rejected by MIN_MW. For this column the header assertion in
+# _resolve_col is the ONLY guard against that class, where demand has two.
+# Max observed 579000 kWh = 1158 MW (data/test_jisseki.csv, 2026-08-01,
+# summer). Ceiling set above plausible installed capacity, not above the
+# sample, because one summer day is not the annual maximum.
+MIN_WIND_SOLAR_MW = 0.0
+MAX_WIND_SOLAR_MW = 3000.0
+
 
 def fetch(date, today=None):
     """Return one day of half-hourly demand for `date` (ROWS_PER_DAY rows).
 
-    Each row is {"datetime_jst": "YYYY-MM-DD HH:MM", "demand_mw": float},
-    keyed to match area_demand so the loader needs no translation layer.
+    Each row is {"datetime_jst": "YYYY-MM-DD HH:MM", "demand_mw": float,
+    "wind_solar_mw": float|None}, keyed to match area_demand so the loader
+    needs no translation layer.
 
     `today` is injected rather than read from the clock so the retention
     branch is testable at any boundary without monkeypatching.
@@ -148,7 +172,9 @@ def fetch(date, today=None):
     lines = text.splitlines(keepends=True)
     header_idx = _find_header(lines)
     reader = csv.DictReader(io.StringIO("".join(lines[header_idx:]), newline=""))
-    demand_col = _resolve_demand_col(reader.fieldnames or [])
+    fields = reader.fieldnames or []
+    demand_col = _resolve_col(fields, DEMAND_PREFIX, DEMAND_UNIT)
+    wind_solar_col = _resolve_col(fields, WIND_SOLAR_PREFIX, WIND_SOLAR_UNIT)
 
     rows = []
     pending = []
@@ -171,12 +197,18 @@ def fetch(date, today=None):
         # the file was caught genuinely mid-publication. Collect rather than
         # raise, so the message can name every missing period instead of
         # only the first one found.
+        #
+        # Demand alone gates this, not wind/solar. A row with demand present
+        # and wind/solar blank therefore loads with a NULL rather than being
+        # collected as pending -- knowingly, because a blank in that column
+        # has never been observed at all (see _parse_row) and a spurious
+        # raise costs a day that cannot be refetched.
         if not str(raw.get(demand_col) or "").strip():
             if str(raw.get(TIME_COL) or "").strip() != EXPECTED_GAP_START:
                 pending.append(str(raw.get(TIME_COL) or f"line {lineno}").strip())
             continue
         try:
-            rows.append(_parse_row(raw, demand_col))
+            rows.append(_parse_row(raw, demand_col, wind_solar_col))
         except (ValueError, AttributeError, TypeError) as exc:
             # Anything that survives the blank filter and still will not
             # parse is a file that changed shape: a reformatted date, a
@@ -214,6 +246,12 @@ def _find_header(lines):
     # splitlines is safe here because no field in this file contains a
     # newline. If one ever does, this splits mid-record and the header
     # search fails loudly rather than reading half a row as a header.
+    #
+    # DEMAND_PREFIX alone, deliberately: this function locates a line, and
+    # one measurement prefix plus both time columns is enough to identify
+    # it. Requiring WIND_SOLAR_PREFIX too would make a dropped column report
+    # as "no header found" -- blaming the wrong thing. _resolve_col is what
+    # speaks for a column that is missing from a header that is present.
     for index, line in enumerate(lines[:HEADER_SEARCH_LIMIT]):
         fields = next(csv.reader([line]), [])
         if DATE_COL in fields and TIME_COL in fields:
@@ -237,26 +275,30 @@ def _source_stamp(lines, header_idx):
     return lines[header_idx - 1].strip()
 
 
-def _resolve_demand_col(fields):
-    """Return the demand column name, asserting it is still in kWh."""
-    matches = [f for f in fields if f.startswith(DEMAND_PREFIX)]
+def _resolve_col(fields, prefix, unit):
+    """Return the column named `prefix`*, asserting its declared unit."""
+    matches = [f for f in fields if f.startswith(prefix)]
     if len(matches) != 1:
         raise SourceUnavailable(
-            f"expected exactly one {DEMAND_PREFIX}* column, found {matches}"
+            f"expected exactly one {prefix}* column, found {matches}"
         )
     col = matches[0]
     match = _UNIT_SUFFIX.search(col.strip())
-    unit = match.group(1) if match else None
-    # Equality, not membership. DEMAND_UNIT is a substring of "kWh/h", so
-    # `DEMAND_UNIT not in col` passed the one rename this guard exists to
-    # catch: a figure already expressed per hour still gets divided by 500,
-    # and every value lands at exactly double -- inside [MIN_MW, MAX_MW] for
-    # any period below 3000 MW true demand, which is most of the night.
+    found = match.group(1) if match else None
+    # Equality, not membership. "kWh" is a substring of "kWh/h", so
+    # `unit not in col` passed the one rename this guard exists to catch:
+    # a figure already expressed per hour still gets divided by 500, and
+    # every value lands at exactly double -- inside [MIN_MW, MAX_MW] for any
+    # period below 3000 MW true demand, which is most of the night.
     # The old comment cited 万kW, which membership does catch. Picking the
     # example that works is how this survived review.
-    if unit != DEMAND_UNIT:
+    #
+    # This matters more for wind/solar than for demand: that column's floor
+    # is 0.0, so its range check cannot reject a doubled value the way
+    # MIN_MW does. Here the assertion is the only guard of its class.
+    if found != unit:
         raise SourceUnavailable(
-            f"demand column is {col!r}, unit {unit!r}, expected {DEMAND_UNIT!r}: "
+            f"{prefix} column is {col!r}, unit {found!r}, expected {unit!r}: "
             f"the /{KWH_PER_30MIN_TO_MW:.0f} conversion no longer holds"
         )
     return col
@@ -269,7 +311,7 @@ def _is_blank(raw):
     return not any(str(value or "").strip() for value in raw.values())
 
 
-def _parse_row(raw, demand_col):
+def _parse_row(raw, demand_col, wind_solar_col):
     # strptime, not string surgery. 日付 arrives as 20260802; a hand-built
     # f"{y}-{m}-{d}" from the pieces would produce 2026-8-2 on a single-digit
     # month, which sorts after 2026-1-1 and before 2026-10-01 and never
@@ -297,7 +339,27 @@ def _parse_row(raw, demand_col):
             f"{stamp}: {mw:.1f} MW outside [{MIN_MW}, {MAX_MW}]"
         )
 
-    return {"datetime_jst": stamp, "demand_mw": mw}
+    # BLANK IS UNOBSERVED (2026-08-22). Every row of data/test_jisseki.csv
+    # carries a value -- wind runs through the night, so this column never
+    # reached zero and never showed whether HEPCO writes "0" or "". Blank is
+    # therefore read as None: the absence of a claim, not a claim of zero
+    # output. Reading unpublished as 0.0 would invent renewable generation
+    # that did not happen; the reverse loses data that cannot be refetched.
+    # If a blank is ever seen alongside a published demand figure, revisit --
+    # it may belong in `pending` instead.
+    raw_ws = str(raw.get(wind_solar_col) or "").strip()
+    if raw_ws:
+        ws = float(raw_ws) / KWH_PER_30MIN_TO_MW
+        if not MIN_WIND_SOLAR_MW <= ws <= MAX_WIND_SOLAR_MW:
+            raise SourceUnavailable(
+                f"{stamp}: wind+solar {ws:.1f} MW outside "
+                f"[{MIN_WIND_SOLAR_MW}, {MAX_WIND_SOLAR_MW}]"
+            )
+    else:
+        ws = None
 
-
-
+    # The key is emitted unconditionally, None or not. load.py's _prepare
+    # takes its column list from sorted(rows[0]) and raises ValueError if any
+    # row's keys differ, so a conditionally-present key would break every day
+    # that contains one blank.
+    return {"datetime_jst": stamp, "demand_mw": mw, "wind_solar_mw": ws}

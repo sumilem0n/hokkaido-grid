@@ -436,9 +436,11 @@ minutes, next week; today is the PK migration and the loaders.
 
 ## Decision — A2, retain raw bytes, 21 Aug 2026
 
+**Status: decided 21 Aug, NOT BUILT.** No fetcher has been touched.
+
 The pipeline parses and discards. On a two-day feed that means a mapping bug can never be re-parsed
 against what actually arrived — the hole we were standing in during the NULL-column diagnosis.
-Fetchers now write the raw response to `data/raw/` gzipped before parsing.
+Fetchers will write the raw response to `data/raw/` gzipped before parsing.
 
 Four pins:
 

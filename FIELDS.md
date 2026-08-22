@@ -115,6 +115,9 @@ wrong in some way; corrected below.
 Wrong here: "clean single-table" (two banner lines), "~2-day tail" (one day),
 column names (carry unit suffixes).
 
+*Correction 2026-08-23: the "~2-day tail (one day)" note above is itself wrong.
+The tail is two days as originally written. See the retention block below.*
+
 ### Decisions
 1. Curtailment (rung 7): MONTHLY file is the sole source. Confirmed.
 2. Backfill: CANNOT come from either daily URL (2-day tail). Week 5's "90-day
@@ -139,6 +142,9 @@ column names (carry unit suffixes).
 Corrected 2026-08-03. Three assumptions from the original plan were wrong;
 all three are recorded here with the measurement that overturned them.
 
+**Corrected again 2026-08-23.** Two of the 2026-08-03 corrections were
+themselves wrong. Treat the claims in this section as measured, not settled.
+
 ### Retention: 2 days
 
 | date fetched | target | age | result |
@@ -148,11 +154,28 @@ all three are recorded here with the measurement that overturned them.
 | 2026-08-03 | 2026-08-02 | 1 | 200 |
 | 2026-08-03 | 2026-08-01 | 2 | 404 |
 
-The window is today and yesterday. One shot per day — a missed cron run
-loses that day permanently, with no second attempt possible. §5's "~2-day
-tail" is wrong and should read one.
+The window is today and yesterday. Age 0 is reachable but not loadable: the
+file is rewritten through the day (see below), and `ROWS_PER_DAY = 47` is
+asserted exactly, so an age-0 fetch before ~23:46 raises rather than loading
+a partial day. Age 1 is reachable and finished. Age 2 is gone permanently.
 
-`RETENTION_DAYS = 2` in sources/hepco_daily.py.
+So there is one usable age, not two — which is what "Decision — gap alerting"
+means by "the window is one night, not two", and that entry stands. What the
+original wording got wrong is narrower: "one shot per day, no second attempt
+possible" reads as one attempt total, when age 1 lasts a whole calendar day.
+Runs at 08:00 and 13:00 both target the same finished file and both count.
+Multiple attempts are possible; multiple days are not. That is the argument
+for a twice-daily schedule, and it is insurance against a failed run, not
+against a lost day.
+
+§5's "~2-day tail" is correct as written; the 2026-08-03 instruction to change
+it to one is withdrawn.
+
+Corrected 2026-08-23.
+
+`RETENTION_DAYS = 2` in sources/hepco_daily.py. This fact now has three homes:
+that constant, the module docstring, and cmd_daily's comment in main.py. Same
+one-fact-one-home question as FIELDS.md vs data/README.md.
 
 ### The daily file is 47 rows, not 48
 
@@ -161,16 +184,26 @@ tail" is wrong and should read one.
 - `last-modified: Sun, 02 Aug 2026 14:59:03 GMT` (23:59:03 JST)
 - `時間コマ 48` (23:30–24:00): date, index and both boundary times present,
   all three measurement columns empty
-- still empty when re-fetched 2026-08-03; the file is never rewritten
+- `時間コマ 48` still empty when re-fetched 2026-08-03: that row is never
+  filled in, at any age
 
 The file is finalised before its last period closes, so 23:30–24:00 never
 appears in the daily feed at any age. A complete daily file is 47 rows.
 That period comes from the monthly file — this is why the two-track design
 exists, every day, not as a backfill for missed runs.
 
+Two claims were conflated here and are now separated. The 48th row is never
+filled — that holds. "The file is never rewritten" does not: it was inferred
+from one file re-fetched after it had already finished. The file IS rewritten
+throughout the day, roughly one period behind real time (two samples an hour
+apart, 2026-08-22), and finalises at its own ファイル更新時間 — 23:46:29 on
+2026-08-22, ~16 minutes after the last period closes. Corrected 2026-08-23,
+prediction made 2026-08-22 and confirmed.
+
 One observation. `ROWS_PER_DAY = 47` is asserted exactly rather than as a
 floor, so a 48-row day fails loudly: that assert firing is how we find out
-HEPCO changed its publishing behaviour.
+HEPCO changed its publishing behaviour. It is also what makes an age-0 fetch
+safe to attempt — a partial file raises rather than loading.
 
 ### File shape
 
@@ -187,6 +220,19 @@ change to 万kW would silently break the ÷500 conversion.
 
 Encoding CP932. 404 responses are UTF-8 HTML, so status is checked before
 decoding.
+
+**The banner is the only provenance the source volunteers, and it is still
+skipped.** Line 1 names the three fields; line 2 carries their values.
+
+Only `ファイル更新時間` distinguishes a finished file from one still being
+written. Both date fields carry the target date and match each other at every
+age, so a validator checking "the dates agree" accepts an incomplete file.
+Row count is the reliable test — 47 is finished, fewer is still being written
+— and `ROWS_PER_DAY = 47` already enforces it.
+
+Measured 2026-08-23: the 2026-08-22 file's `ファイル更新時間` was 23:46:29,
+~16 minutes after the last period closes. One observation, not a threshold.
+Do not compare against it.
 
 ### Bounds
 
@@ -228,6 +274,24 @@ night, so the column never reached zero and never showed whether HEPCO writes `0
 Blank is read as `None`: the absence of a claim, not a claim of zero output. Not collected
 into `pending`, because a spurious raise costs a day that cannot be refetched. If a blank
 is ever seen alongside a published demand figure, revisit.
+
+**Permanent NULL span — 6, 9 and 15 August.** `wind_solar_mw` was added to the
+parser on 22 Aug, so only days loaded after that carry it: 21 and 22 August,
+94 of 235 daily rows. The other three days on file are outside the retention
+window and cannot be re-fetched by any means, so those 141 rows are permanently
+NULL. This is not backfill debt and no future run will fill them. August's
+monthly file will publish wind and solar separately, but under the composite PK
+those arrive as new rows with `source = 'hepco_monthly_areajukyu'`, not as a
+fill of these cells. Measured 2026-08-23:
+`SELECT COUNT(*), COUNT(wind_solar_mw) WHERE source='hepco_daily_jisseki'`
+returned `(235, 94)`.
+
+This gives NULL in `wind_solar_mw` two meanings on the daily track: "this day
+predates the column" and "HEPCO published nothing" (see *Blank is unobserved*
+above). Nothing currently distinguishes them. The wind/solar decision rules
+that NULL on daily `wind_mw`/`solar_mw` means "not published, never will be";
+that ruling does not extend to `wind_solar_mw`, and this is the ambiguity it
+was written to avoid, arriving from a direction it did not anticipate.
 
 ## Decision — wind/solar schema and primary key, 19 Aug 2026
 
@@ -387,6 +451,10 @@ one. This is the arithmetic behind the two states; the states themselves are unc
 - Permanent — the file is gone from HEPCO, nothing recovers it. There is no degraded or partial
   recovery between the two.
 
+*Clarified 2026-08-23: "one night" is one usable calendar day, not one attempt. Several runs inside
+that day all see D as recoverable. The retention block above states this in the same terms; neither
+entry contradicts the other.*
+
 `gaps` runs nightly under cron; a non-zero exit mails. The decision is which of those two states
 mails.
 
@@ -465,6 +533,8 @@ minutes, next week; today is the PK migration and the loaders.
   boundary collapses the recoverable state to zero runs and makes every gap a crossing.
 - Acknowledgement must refuse a gap that is still recoverable. Acking a fixable day converts it to a
   permanent one by hand.
+- **Mail is assumed and does not exist.** This machine has no MTA, so every "mails" above currently
+  terminates in nothing. Opened 2026-08-23; see the notification-channel decision when it is made.
 
 ## Decision — A2, retain raw bytes, 21 Aug 2026
 
@@ -488,8 +558,5 @@ Four pins:
 - **This does not fix `data/` being gitignored.** Raw retention protects against a parser bug and
   does nothing about a dead laptop. The off-machine copy is a separate open item in data/README.md
   and stays open.
-
-Also, unrelated to any rung: line 1 of the jisseki file carries HEPCO's own file-update timestamp,
-currently skipped. It is the only provenance the source volunteers — capture it.
 
 Pruning: none yet. A daily CSV is single-digit KB.

@@ -20,8 +20,14 @@ That same file was generated at 23:42:44 and uploaded at 23:59:03, before its
 last period (時間コマ 48, 23:30-24:00) had closed, and was never rewritten. The
 row exists with its date, index and both boundary times filled in and all
 three measurement columns empty, at every age the file was reachable. So a
-complete daily file is 47 rows, not 48, and the missing period comes from the
-monthly file. Retention is two days: today and yesterday, one shot per day.
+complete daily file is 47 rows, not 48, and the missing period comes from the monthly file. 
+
+Retention is roughly two days (see RETENTION_DAYS below), and
+the file is rewritten intraday -- 47 rows is what a *finished* file looks
+like, not what is available all day. The 2026-08-22 file's banner gave
+ファイル更新時間 23:46:29, ~16 minutes after the final period closes
+(measured 23 Aug 2026). Read the banner's time value to tell finished
+from in-progress: the two date fields match either way.
 
 エリア総発電量(kWh) is in the header and deliberately NOT mapped (2026-08-22).
 It is total area generation; area_demand.supply_total_mw is the monthly file's

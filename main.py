@@ -52,12 +52,13 @@ def build_parser():
     daily = sub.add_parser("daily", help="fetch one day of jisseki over HTTP and merge it")
     daily.add_argument("date", nargs="?", default=None, help="YYYY-MM-DD (default: yesterday)")
 
-    monthly = sub.add_parser(
-        "monthly",
-        help="load a monthly areajukyu CSV -- REPLACES every row of the monthly "
-             "source, not only that month's. Do not loop this until week 6 "
-             "scopes replace_rows by month.",
+    MONTHLY_HELP = (
+        "load a monthly areajukyu CSV -- deletes and rewrites only the "
+        "rows for the month this file covers. Other months and the daily "
+        "track are untouched."
     )
+    monthly = sub.add_parser("monthly", help=MONTHLY_HELP, description=MONTHLY_HELP)
+
     monthly.add_argument("path", type=Path, help="path to a monthly CSV")
 
     weather = sub.add_parser("weather", help="load a weather JSON file")

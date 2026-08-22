@@ -65,3 +65,20 @@ CREATE TABLE IF NOT EXISTS "area_demand" (
     )
     -- NB: if you later add 揚水/蓄電池/連系線 (cols 17-19), do NOT give them >= 0 checks — those go negative.
 );
+-- Precedence view: one row per timestamp, monthly beats daily.
+-- Rationale, the '<' vs '<=' trap, and 22 Aug verification:
+-- sql/migrations/002_precedence_view.sql
+
+DROP VIEW IF EXISTS area_demand_current;
+
+CREATE VIEW area_demand_current AS
+SELECT a.datetime_jst, a.source, a.demand_mw, a.wind_mw, a.solar_mw,
+       a.wind_solar_mw, a.supply_total_mw
+FROM area_demand AS a
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM area_demand AS b
+    WHERE b.datetime_jst = a.datetime_jst
+      AND CASE b.source WHEN 'hepco_monthly_areajukyu' THEN 0 ELSE 1 END
+        < CASE a.source WHEN 'hepco_monthly_areajukyu' THEN 0 ELSE 1 END
+);

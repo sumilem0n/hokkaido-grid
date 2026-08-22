@@ -536,6 +536,89 @@ minutes, next week; today is the PK migration and the loaders.
 - **Mail is assumed and does not exist.** This machine has no MTA, so every "mails" above currently
   terminates in nothing. Opened 2026-08-23; see the notification-channel decision when it is made.
 
+## Decision — notification channel, 23 Aug 2026
+
+**Status: decided 23 Aug, NOT BUILT.** Blocks rung 4; no crontab until it exists.
+
+The gap-alerting decision above says "a non-zero exit mails" in five places. This
+machine has no MTA — `command -v sendmail || mail` returns empty — so cron mails
+job *output* into nothing and every "fail loudly" claim in the design currently
+terminates in silence. That gap was open from 21 Aug and unnamed until today.
+
+**Chosen: a heartbeat file for the machine-readable signal, a failure log for the
+human-readable detail. No MTA.**
+
+- `state/last_success` — the wrapper writes one ISO-8601 line on exit 0 and
+  nothing on failure. `>` truncates, so the file always holds exactly the last
+  success. `gaps` reads its age.
+- `logs/failures.log` — one appended line per non-zero exit, carrying the exit
+  code and the target day, so the failure taxonomy is readable without opening
+  `cron.log`.
+
+### Why the heartbeat, and not just the log
+
+The gaps entry rests on *"silence means nothing new was lost"* — a claim silence
+can only make if every loss is noisy until answered. Nothing currently makes
+cron itself noisy. A broken crontab, a machine off for a day, a wrapper with no
+execute bit: all three produce exactly what a working pipeline produces, which
+is nothing.
+
+The heartbeat inverts the question. Rather than trusting that an alert would have
+fired, `gaps` asks when the pipeline last succeeded. That admits a third state
+alongside recoverable and permanent — **the run did not happen** — which the
+current design cannot express and which is the failure most likely to go
+unnoticed, because it is the one with no output at all.
+
+### Costed rejections
+
+**An MTA (msmtp or a postfix satellite).** Push notification, which the other two
+options genuinely lack. Rejected on three grounds. Its credential expires
+silently, so "no mail" comes to mean either nothing broke or mail broke — the
+same ambiguity alert option B was rejected for one section above, arriving in the
+transport instead of the logic. It also cannot be verified without sending test
+mail on a schedule, which is a second thing to maintain. And Phase 3 moves this
+pipeline to Azure with Azure Monitor as the notification story, so a mail relay
+inside a laptop VM is work thrown away in roughly five months.
+
+**Failure log alone.** Cheapest, and it records what went wrong. It cannot record
+what failed to happen: a run that never starts writes no failure line, so an
+empty log is consistent with both a healthy week and a dead cron. That is exactly
+the state the heartbeat exists to make visible.
+
+### Cost of the chosen option, accepted
+
+**Nothing pushes.** Both artifacts are pull — they are read, not delivered — so a
+failure is invisible until something looks. Two things look: `gaps` reads the
+heartbeat on every run, and the week-11 five-minute morning log read is the
+scheduled human half. If that habit lapses, this degrades to no alerting at all,
+which is the same failure mode the deleted §8 English loop demonstrated. The
+mitigation is that the heartbeat is machine-readable, so the habit can later be
+replaced by a check rather than restored.
+
+**The gap-alerting entry needs rewording, not redeciding.** Alert option C's logic
+— noisy while recoverable, noisy across the crossing, silent only after an explicit
+acknowledgement — is unchanged. Only the verb changes: "mails" becomes "exits
+non-zero and writes a failure line". The exit code was always the real signal;
+mail was one possible reader of it. Reword on the next pass over that section.
+
+**"Nightly" becomes "morning".** The state table there is keyed on night of D+1;
+under the morning schedule it is morning of D+1. Same arithmetic, and the run
+still lands inside the one usable day.
+
+### Open
+
+- **The heartbeat has no reader yet.** `gaps` is unbuilt, so until it exists the
+  heartbeat is a file nobody opens. Not a reason to defer writing it — the wrapper
+  is being written now and adding it later means editing a working script — but it
+  is not alerting until `gaps` reads it.
+- **Staleness threshold undecided.** How old is too old depends on the cron
+  schedule and on how many consecutive missed runs are tolerable. Decide with
+  `gaps`, not before.
+- **This does nothing about a machine that is off for a full calendar day.** The
+  target file crosses to age 2 and is unrecoverable; a heartbeat records the loss,
+  it does not prevent it. Daily uptime is the assumption the whole daily track
+  rests on, stated here so it reads as a known exposure rather than an oversight.
+
 ## Decision — A2, retain raw bytes, 21 Aug 2026
 
 **Status: decided 21 Aug, NOT BUILT.** No fetcher has been touched.

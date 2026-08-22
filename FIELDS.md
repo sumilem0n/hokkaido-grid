@@ -197,6 +197,38 @@ trough. Every wrong unit convention lands outside: raw kWh ~1.2e6,
 double-converted ~5–8, 万kW ~250–400 or ~24000–40000. Observed daily file
 checks out: 1193000 ÷ 500 = 2386 MW at 00:00.
 
+### Columns — mapped and unmapped, 22 Aug 2026
+
+Seven fields in the header. Four are mapped:
+
+| Header | Maps to | Conversion |
+|---|---|---|
+| `日付` + `時間帯_自` | `datetime_jst` | strptime `%Y%m%d`, hour zero-padded |
+| `エリア総需要量(kWh)` | `demand_mw` | ÷ 500 |
+| `エリア風力・太陽光発電量(kWh)` | `wind_solar_mw` | ÷ 500, added 22 Aug |
+
+**`エリア総発電量(kWh)` is deliberately NOT mapped.** It is total area *generation*.
+`area_demand.supply_total_mw` is the monthly file's 合計 (col 21), a different quantity.
+Mapping one into the other would make a column mean two things depending on which loader
+wrote the row — the failure the wind/solar fork was decided to avoid. Revisit only with a
+decision about what the column should mean, not by filling it because it is empty.
+
+`時間コマ` and `時間帯_至` are unmapped and need no decision: the period index is
+derivable and the end boundary is the next row's start.
+
+**`wind_solar_mw` bounds: MIN 0.0 / MAX 3000.0.** The floor is 0.0 because wind and solar
+legitimately produce nothing, and that costs the second unit guard — a double-converted
+value lands near 2 MW, inside the band, where the same error on demand lands at ~5 and is
+rejected by MIN_MW. For this column the header assertion in `_resolve_col` is the only
+guard of that class. Max observed 579000 kWh = 1158 MW (`data/test_jisseki.csv`,
+2026-08-01, summer); ceiling set above plausible installed capacity, not above the sample.
+
+**Blank is unobserved.** Every row of the 2026-08-01 file carries a value — wind runs at
+night, so the column never reached zero and never showed whether HEPCO writes `0` or ``.
+Blank is read as `None`: the absence of a claim, not a claim of zero output. Not collected
+into `pending`, because a spurious raise costs a day that cannot be refetched. If a blank
+is ever seen alongside a published demand figure, revisit.
+
 ## Decision — wind/solar schema and primary key, 19 Aug 2026
 
 A standing decision about the area_demand schema, not a note about one source.

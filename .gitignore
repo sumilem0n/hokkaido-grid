@@ -12,3 +12,8 @@ data/*.csv
 data/*.json
 *.swp
 *.swo
+
+# machine state and cron output -- must not be committed:
+# a restored last_success would be a false claim that the pipeline ran
+logs/
+state/

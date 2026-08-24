@@ -4,6 +4,7 @@
 
 [paths]
 db = "sql/hokkaido.db"
+raw_dir = "data/raw"
 
 [logging]
 level = "INFO"

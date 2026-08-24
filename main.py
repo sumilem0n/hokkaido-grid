@@ -76,7 +76,7 @@ def cmd_daily(args, cfg):
     # the day sitting directly above it. That is why the except blocks can live
     # in one place instead of once per command.
     log.info("daily: fetching %s", day)
-    rows = hepco_daily.fetch(day)
+    rows = hepco_daily.fetch(day, raw_dir=cfg.raw_dir)  
 
     conn = sqlite3.connect(cfg.db_path)
     try:

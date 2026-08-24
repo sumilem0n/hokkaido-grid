@@ -26,7 +26,7 @@ class Config:
         self.source = source
         paths = _require(data, "paths", "top level", source)
         self.db_path = self._resolve(_require(paths, "db", "paths", source))
-
+        self.raw_dir = self._resolve(paths.get("raw_dir", "data/raw"))
         level = str(data.get("logging", {}).get("level", "INFO")).upper()
         if level not in VALID_LEVELS:
             raise ConfigError(

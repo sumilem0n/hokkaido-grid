@@ -125,7 +125,7 @@ MIN_WIND_SOLAR_MW = 0.0
 MAX_WIND_SOLAR_MW = 3000.0
 
 
-def fetch(date, today=None):
+def fetch(date, today=None, raw_dir=None):
     """Return one day of half-hourly demand for `date` (ROWS_PER_DAY rows).
 
     Each row is {"datetime_jst": "YYYY-MM-DD HH:MM", "demand_mw": float,
@@ -169,6 +169,13 @@ def fetch(date, today=None):
         resp.raise_for_status()
     except requests.HTTPError as exc:
         raise SourceTransientError(f"HTTP {resp.status_code} for {date}") from exc
+
+    if raw_dir is not None:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        # Local clock, which is JST on this host -- same basis as datetime_jst.
+        captured = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+        raw_path = raw_dir / f"hepco_daily_{date:%Y%m%d}__{captured}.csv"
+        raw_path.write_bytes(resp.content)
 
     # Never resp.text. A byte that is not valid CP932 means the file changed,
     # and UnicodeDecodeError is the correct loud failure. errors="replace"

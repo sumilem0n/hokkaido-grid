@@ -12,6 +12,14 @@
 
   This carries each hour's weather across its :00 and :30 demand rows. The choice lives in the query,
   so it is reversible and documented — not fabricated in the tables.
+
+  **Cost, stated 25 Aug 2026 and previously unstated.** `strftime` wraps the indexed column, so this
+  join plans as `SCAN area_demand`, not `SEARCH`. Measured 19 Aug on the DELETE predicate, same rule:
+  the range form plans `SEARCH ... USING INDEX sqlite_autoindex_area_demand_1`, the `strftime` form
+  plans `SCAN`. The grain decision is still correct — flooring in the query is what keeps it
+  reversible — but the cost is real and invisible at 1722 rows. It becomes visible at 28 months.
+  If it matters later the fix is a range join per hour (`>= h AND < h+1`), not a stored floored
+  column, which would put the bridge back into storage and undo the decision.
 - datetime_jst is a JST local-time string. Safe as a key because Japan has no DST (no duplicated or
   skipped local hour → no collision). In a DST zone you would key on UTC instead.
 
@@ -21,6 +29,9 @@
 - Encoding: CP932 (Shift-JIS superset). NOT UTF-8 — loader must open(..., encoding="cp932").
 - Line endings: CRLF (Windows-authored).
 - Unit: MW (the banner row reads 単位[MW平均]). NO ×10 — this file is already MW, not 万kW.
+  **Scope, added 25 Aug: this sentence is about the MONTHLY file only.** The table it loads into also
+  holds daily rows, and the daily jisseki feed is kWh (÷500). A reader taking this line as a fact
+  about `area_demand` rather than about Source A gets the wrong unit for half the table.
 - Structure: line 1 = unit/group banner (SKIP 1); line 2 = header; lines 3..1442 = data
   (30 days × 48 half-hours = 1440 rows); then ~48 trailing all-comma blank rows (DROP — empty DATE).
 - Grain: 30-min, JST.
@@ -29,6 +40,11 @@
   equals エリア需要 in a balanced grid.
 
 Column inventory (index -> field). Kept columns marked [x]; the rest exist and can be added later.
+
+**This inventory is the 22-COLUMN LAYOUT ONLY (202504–202607).** Idx 8 is 火力出力制御量, which is
+the 22-column form. In the 20-column layout (202404–202503) position 8 is 水力 and everything below
+shifts, so idx 13–16 are UNCONFIRMED there and cannot be checked until the backfill pulls a
+202404–202503 file. Rung 7 reads exactly those columns. Resolve by header name; raise on absence.
 
 | idx | raw (JP)              | meaning              | unit | notes                                   |
 |-----|----------------------|----------------------|------|-----------------------------------------|
@@ -40,7 +56,7 @@ Column inventory (index -> field). Kept columns marked [x]; the rest exist and c
 | 5   | 火力(石炭)           | thermal coal         | MW   | supply                                  |
 | 6   | 火力(石油)           | thermal oil          | MW   | supply                                  |
 | 7   | 火力(その他)         | thermal other        | MW   | supply                                  |
-| 8   | 火力出力制御量        | thermal curtailment  | MW   |                                         |
+| 8   | 火力出力制御量        | thermal curtailment  | MW   | 22-col layout only; 水力 in the 20-col  |
 | 9   | 水力                  | hydro                | MW   | supply                                  |
 | 10  | 地熱                  | geothermal           | MW   | supply                                  |
 | 11  | バイオマス            | biomass              | MW   | supply                                  |
@@ -73,6 +89,14 @@ Column inventory (index -> field). Kept columns marked [x]; the rest exist and c
 | precipitation        | precipitation | mm          | preceding-hour SUM  | -> precipitation_mm            |
 | snowfall             | snowfall      | cm          | preceding-hour SUM  | -> snowfall_cm; 7 cm ~= 10 mm  |
 | wind_speed_10m       | wind @10m     | km/h        | instant             | -> wind_speed_kmh              |
+
+**One grid cell stands in for area-wide demand.** Defensible for temperature. NOT defensible for wind
+at rung 7 — Hokkaido's wind capacity is in Sōya and Tokachi, so Sapporo `wind_speed_10m` is a poor
+proxy for area wind output and a correlation built on it would be confidently wrong.
+
+**ERA5 publication latency vs the 2-day tail: UNVERIFIED.** Reanalysis publishes on a delay. If that
+delay exceeds the demand feed's retention the two sources cannot be fetched in one pass and joined
+immediately. Not checked against Open-Meteo's documentation; recorded as unverified, not asserted.
 
 ## Canonical key
 - datetime_jst: TEXT 'YYYY-MM-DD HH:MM', JST. area_demand at :00 and :30; weather_hourly at :00 only.
@@ -205,6 +229,40 @@ floor, so a 48-row day fails loudly: that assert firing is how we find out
 HEPCO changed its publishing behaviour. It is also what makes an age-0 fetch
 safe to attempt — a partial file raises rather than loading.
 
+### A 46-row day — OBSERVED 2026-08-25, and it is not the same thing
+
+`hepco_daily_20260824__20260825T082525.csv` and `...T082828.csv` (byte-identical,
+`cmp` silent): 46 periods. `時間コマ 47` (23:00–23:30) absent as well as 48.
+Internal stamp `20260824,23:13:25,20260824`.
+
+Compare the two stamps directly, which is possible only because both days'
+raw bytes were retained:
+
+| day covered | ファイル更新時間 | last period ends | rows |
+|---|---|---|---|
+| 2026-08-23 | 23:42:21 | 23:30 | 47 — finalised 12 min after close |
+| 2026-08-24 | **23:13:25** | 23:30 | **46 — finalised 17 min BEFORE close** |
+
+The 24th's file was finalised *before* its last published period had closed, and
+nine hours later HEPCO had still not rewritten it. That is not lateness against
+the ~16-minute figure above; it is the documented finalisation behaviour not
+happening at all.
+
+**The consequence for error classification, and it is a live decision.** The
+fetcher raises `SourceTransientError` — *another attempt may succeed* — on a
+short day. But this section already states the rule for the opposite case: the
+exact `ROWS_PER_DAY = 47` assert exists so that "that assert firing is how we
+find out HEPCO changed its publishing behaviour." A 46-row day is that assert
+firing. Read by this file's own logic, the correct first hypothesis is a source
+change, not a transient one. If a day can permanently end at 46, the retry path
+waits out the two-day tail and then loads NOTHING — 46 recoverable periods traded
+for zero.
+
+**Decide with `gaps`, 29 Aug 2026.** Two observations only (one 47-day, one
+46-day); do not treat the pattern as established. What would settle it: a second
+short day, or the 2026-08 monthly file showing whether 23:00 on the 24th exists
+in the corrected archive.
+
 ### File shape
 
     line 1  ファイル更新日,ファイル更新時間,対象年月日
@@ -224,11 +282,19 @@ decoding.
 **The banner is the only provenance the source volunteers, and it is still
 skipped.** Line 1 names the three fields; line 2 carries their values.
 
+*Note 2026-08-25: the raw retention built on the 24th makes the banner readable
+after the fact even though the parser discards it — the 46-row finding above
+came out of two retained files' stamps, not out of the database. That is not a
+substitute for capturing it. The stamp is provenance for a row; reading it from
+a filename-dated artifact is archaeology.*
+
 Only `ファイル更新時間` distinguishes a finished file from one still being
 written. Both date fields carry the target date and match each other at every
 age, so a validator checking "the dates agree" accepts an incomplete file.
 Row count is the reliable test — 47 is finished, fewer is still being written
-— and `ROWS_PER_DAY = 47` already enforces it.
+— and `ROWS_PER_DAY = 47` already enforces it. *Qualified 2026-08-25: "fewer is
+still being written" is exactly the reading the 46-row entry above puts in
+question.*
 
 Measured 2026-08-23: the 2026-08-22 file's `ファイル更新時間` was 23:46:29,
 ~16 minutes after the last period closes. One observation, not a threshold.
@@ -242,6 +308,14 @@ the sample is one shoulder-season month with no winter peak or summer
 trough. Every wrong unit convention lands outside: raw kWh ~1.2e6,
 double-converted ~5–8, 万kW ~250–400 or ~24000–40000. Observed daily file
 checks out: 1193000 ÷ 500 = 2386 MW at 00:00.
+
+**A range CHECK cannot catch a unit error on its own** — a kWh value in an MW
+column is also non-negative, which is why the header-name assertion carries the
+weight here. And summing an instantaneous power column produces no unit at all:
+`SUM(demand_mw)` over 47 half-hourly readings is a number of nothing; energy is
+that × 0.5. Weather is hourly against half-hourly demand, so demand aggregates
+UP to meet it — and because the column is MW that aggregation is a MEAN, not a
+sum. `SUM` is the reflex and gives a plausible, wrong number.
 
 ### Columns — mapped and unmapped, 22 Aug 2026
 
@@ -381,6 +455,13 @@ outcomes are indistinguishable at the point of reading. Load-time behaviour is e
 the monthly backfill reaching an already-captured timestamp either aborts on the unique
 constraint or overwrites the daily row, destroying the comparison in the act of setting it up.
 
+### Re-ask trigger
+
+**[OWED — NOT YET WRITTEN. §11's End-Sep line asks for one and this is the half still missing.]**
+The rewrite of the argument above landed 20 Aug (`2a541b9`); the trigger did not. A decision with
+consequences but no trigger cannot be revisited on evidence, only on memory. Write the condition
+that would make column option 3 or the composite key the wrong call — not a date, a condition.
+
 ### Consequences
 
 - Loaders take an `ON CONFLICT (datetime_jst, source)` target; bare `INSERT OR REPLACE` is now
@@ -397,6 +478,14 @@ constraint or overwrites the daily row, destroying the comparison in the act of 
   rather than a no-op.
 - Rung 7 (curtailment against wind specifically) reads `wind_mw` from monthly rows only and ignores
   `wind_solar_mw` entirely.
+
+**Implemented 21–22 Aug** — migration `001_composite_pk.sql` (key), `002_precedence_view.sql`
+(`area_demand_current`). **Never yet exercised against a real duplicate:** on 24 Aug
+`SELECT COUNT(*)` over the table and over the view both returned 1722, because April monthly and
+August daily share no timestamp. The view's `<` versus `<=` behaviour was proven only inside a
+rolled-back transaction, and if it is wrong it returns zero rows silently. The 30 Aug backfill is
+the first collision; expect the view count to fall below the table count, and treat that gap as
+the number to check.
 
 ## Decision — gap alerting and acknowledgement, 21 Aug 2026
 
@@ -423,6 +512,10 @@ Two exclusions, both of which would otherwise produce mail every night forever:
   period closes, so a complete daily capture is 47 rows and that period always comes from monthly.
   A detector working at half-hour grain without this exclusion reports one gap per day, forever,
   on a pipeline that is working correctly.
+
+*Open, 2026-08-25: the 46-row day above means 23:00–23:30 can also be absent. Whether that is a
+third exclusion, a gap, or a source change is the decision due 29 Aug. Do not write the detector
+before it is made — the answer changes what `gaps` reports on 24 August.*
 
 "Recoverable" is per source, not per date. The same date can be permanently gone from the daily
 track and still pending from monthly, and those two facts are unrelated. Hence `gap_ack` is keyed
@@ -531,14 +624,30 @@ minutes, next week; today is the PK migration and the loaders.
 - "Recoverable" assumes the nightly run lands inside the one-day window. That depends on the cron
   schedule, which is decided at rung 4 on Sunday — a run time that drifts past the retention
   boundary collapses the recoverable state to zero runs and makes every gap a crossing.
+
+  *Answered and then complicated, 2026-08-25.* Rung 4 landed 23 Aug with two slots, `0 8` and
+  `0 13`. **The `0 8` slot has never fired**: the machine's boot time was 08:27:36 on the 24th and
+  08:25:15 on the 25th, and plain cron does not run jobs it missed. An `@reboot` line was added on
+  the 24th as interim cover and fired correctly on the 25th, ten seconds after boot — which is also
+  ten seconds ahead of the network being up, a margin thin enough that a slower DHCP lease flips it.
+  The 13:00 slot lands inside the window and is the load-bearing one. **A crontab line that has
+  never once fired reads as cover and is not.** Move `0 8` past the boot window or delete it;
+  decide with `gaps`.
 - Acknowledgement must refuse a gap that is still recoverable. Acking a fixable day converts it to a
   permanent one by hand.
-- **Mail is assumed and does not exist.** This machine has no MTA, so every "mails" above currently
-  terminates in nothing. Opened 2026-08-23; see the notification-channel decision when it is made.
+- ~~**Mail is assumed and does not exist.**~~ **RESOLVED 23 Aug — see the notification-channel
+  decision below.** Every "mails" above should be read as "exits non-zero and writes a failure
+  line". The logic of alert option C is unchanged; only the verb is. *Reword on the next pass.*
 
 ## Decision — notification channel, 23 Aug 2026
 
-**Status: decided 23 Aug, NOT BUILT.** Blocks rung 4; no crontab until it exists.
+**Status: decided 23 Aug. BUILT 23 Aug — `6f158fc`.** Rung 4 is complete: wrapper in `bin/`,
+heartbeat at `state/last_success`, `logs/failures.log`, two-a-day schedule, both branches proven.
+
+*Corrected 2026-08-25. This block previously read "NOT BUILT ... blocks rung 4; no crontab until it
+exists" — false for two days while the crontab was live. Same class of error as `data/README.md`
+describing itself as untracked while tracked: a status line in a decision file, believed instead of
+the repository.*
 
 The gap-alerting decision above says "a non-zero exit mails" in five places. This
 machine has no MTA — `command -v sendmail || mail` returns empty — so cron mails
@@ -568,6 +677,15 @@ fired, `gaps` asks when the pipeline last succeeded. That admits a third state
 alongside recoverable and permanent — **the run did not happen** — which the
 current design cannot express and which is the failure most likely to go
 unnoticed, because it is the one with no output at all.
+
+**What the heartbeat cannot do, learned 2026-08-25.** It reports the last success
+and nothing else, so *never ran* and *ran and failed correctly* produce an
+identical reading. On the 25th `state/last_success` held the previous day's
+manual session; the first reading taken from that was "cron did not fire", and it
+was wrong — cron had fired at 08:25:25 and exited 75 on the 46-row day. What
+separated the two was a raw capture carrying a timestamp nobody had typed. **The
+heartbeat is a pulse, not a log**, and the third state it was built to expose is
+only distinguishable when something else records the attempt.
 
 ### Costed rejections
 
@@ -610,36 +728,61 @@ still lands inside the one usable day.
 - **The heartbeat has no reader yet.** `gaps` is unbuilt, so until it exists the
   heartbeat is a file nobody opens. Not a reason to defer writing it — the wrapper
   is being written now and adding it later means editing a working script — but it
-  is not alerting until `gaps` reads it.
+  is not alerting until `gaps` reads it. *Still true 2026-08-25: the only reader so
+  far has been a human at a terminal.*
 - **Staleness threshold undecided.** How old is too old depends on the cron
   schedule and on how many consecutive missed runs are tolerable. Decide with
   `gaps`, not before.
+- **`logs/cron.log` lines carry no timestamp — NEW 2026-08-25.** Two runs three
+  minutes apart on the 25th wrote entries indistinguishable from each other. Week
+  8's bar is that a week of logs should explain events without opening the code;
+  this does not meet it.
 - **This does nothing about a machine that is off for a full calendar day.** The
   target file crosses to age 2 and is unrecoverable; a heartbeat records the loss,
   it does not prevent it. Daily uptime is the assumption the whole daily track
   rests on, stated here so it reads as a known exposure rather than an oversight.
+  *Reinforced 2026-08-25: the machine has booted after 08:00 on two consecutive
+  days, which is why `0 8` never fired.*
 
 ## Decision — A2, retain raw bytes, 21 Aug 2026
 
-**Status: decided 21 Aug, NOT BUILT.** No fetcher has been touched.
+**Status: decided 21 Aug. BUILT 24 Aug — `388cbe6`, both halves proven.**
 
-The pipeline parses and discards. On a two-day feed that means a mapping bug can never be re-parsed
-against what actually arrived — the hole we were standing in during the NULL-column diagnosis.
-Fetchers will write the raw response to `data/raw/` gzipped before parsing.
+*Corrected 2026-08-25. This block read "NOT BUILT. No fetcher has been touched" for a day after the
+fetcher was touched, committed and pushed.*
+
+The pipeline parsed and discarded. On a two-day feed that meant a mapping bug could never be
+re-parsed against what actually arrived — the hole we were standing in during the NULL-column
+diagnosis. Fetchers now write the raw response to `data/raw/` before parsing.
 
 Four pins:
 
 - **Write before parse.** Fetch → write raw → parse. If the parse raises, the bytes are already on
   disk. Writing after a successful parse retains exactly the files that were never needed.
-- **Filename is `{source}_{period}_{captured_at}.csv.gz`.** The monthly archive is retroactively
+  *As built the write sits between `raise_for_status()` and the cp932 decode: above it the response
+  may be an error page not worth keeping, below it the bytes are gone — and the decode is
+  `errors="strict"` precisely so a changed file raises, which is the failure that most needs them.*
+- **Filename is `{source}_{period}_{captured_at}`.** The monthly archive is retroactively
   corrected without notice, so `202607` fetched in August and `202607` fetched in December are two
   different files and the second must not overwrite the first. Capture date is provenance, not
-  decoration.
+  decoration. *As built: `hepco_daily_20260823__20260824T113733.csv`. Never overwrite — verified by
+  running two fetches of the same day and confirming both files survive.*
+- **DIVERGENCE, 2026-08-25: this block specified `.csv.gz`; the code writes uncompressed `.csv`.**
+  Nothing has noticed because a daily CSV is single-digit KB and the pruning line below says as
+  much. Decide which is right and change one of them — a spec that names a format the code does not
+  produce is the same defect as a docstring describing behaviour the statement does not have.
 - **Retain as received, before decoding.** Bytes, not text — the CP932 decode happens downstream of
   the write. This also means a failed fetch retains its UTF-8 404 HTML, which is the artifact that
   explains why a day is missing.
-- **This does not fix `data/` being gitignored.** Raw retention protects against a parser bug and
-  does nothing about a dead laptop. The off-machine copy is a separate open item in data/README.md
-  and stays open.
+- ~~**This does not fix `data/` being gitignored.**~~ **Withdrawn 2026-08-25 — the premise was
+  false.** `data/README.md` is and always was tracked (`git ls-files data/` returns it; `ab72bb3`,
+  18 Aug). `.gitignore` held *file* patterns, `data/*.csv` and `data/*.json`, never the directory —
+  and `data/*.csv` never matched `data/raw/` at all, because a single `*` does not cross a directory
+  boundary. Fixed to `data/**/*.csv` on 24 Aug. **What survives:** raw retention protects against a
+  parser bug and does nothing about a dead laptop, and the off-machine copy remains an open item.
 
 Pruning: none yet. A daily CSV is single-digit KB.
+
+**What it bought, one day later.** The 46-row finding above came out of comparing two retained
+files' internal stamps. Neither the database nor the logs held that comparison; without the raw
+bytes the 24th would have been a day that failed for an unexamined reason.

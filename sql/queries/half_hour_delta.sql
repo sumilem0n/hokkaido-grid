@@ -42,30 +42,21 @@ SELECT datetime_jst, demand_mw, prev_demand_mw, delta_mw
 FROM flagged
 ORDER BY datetime_jst;
 
--- PLAN (26 Aug, sql/hokkaido.db):
---   CO-ROUTINE ordered -> CO-ROUTINE (subquery-6)
---     -> SCAN a USING INDEX sqlite_autoindex_area_demand_1
---     -> CORRELATED SCALAR SUBQUERY 5 -> SEARCH b USING COVERING INDEX
---   SCAN ordered -> USE TEMP B-TREE FOR ORDER BY
---
--- The correlated subquery belongs to the view (the precedence lookup), not to
--- this query. The temp b-tree is NEW against Monday's baseline and was NOT
--- predicted: wrapping the window in a CTE hides the source ordering from the
--- consumer, so the final ORDER BY cannot reuse the PK index and sorts 1769 rows.
--- The window's own ordering was still free. Cost of the two-layer structure,
--- which is required because a window function's output cannot be tested in the
--- SELECT that creates it. Negligible here; note the shape, not the number.
-
--- PLAN (26 Aug, sql/hokkaido.db):
---   CO-ROUTINE ordered -> CO-ROUTINE (subquery-6)
---     -> SCAN a USING INDEX sqlite_autoindex_area_demand_1
---     -> CORRELATED SCALAR SUBQUERY 5 -> SEARCH b USING COVERING INDEX
---   SCAN (subquery-6) -> SCAN ordered -> USE TEMP B-TREE FOR ORDER BY
+-- PLAN (26 Aug, re-run 27 Aug, sql/hokkaido.db) -- as printed, tree intact:
+--   |--CO-ROUTINE ordered
+--   |  |--CO-ROUTINE (subquery-6)
+--   |  |  |--SCAN a USING INDEX sqlite_autoindex_area_demand_1
+--   |  |  `--CORRELATED SCALAR SUBQUERY 5
+--   |  |     `--SEARCH b USING COVERING INDEX sqlite_autoindex_area_demand_1 (datetime_jst=?)
+--   |  `--SCAN (subquery-6)
+--   |--SCAN ordered
+--   `--USE TEMP B-TREE FOR ORDER BY
 --
 -- SCAN a + SEARCH b belong to the VIEW, not this query: the precedence rule is
--- one index lookup per row, 1769 of them. Monday's query paid the same.
+-- one covering-index lookup per row, 1769 of them. Monday's query paid the same.
 -- The temp b-tree is NEW against Monday and was NOT predicted. Wrapping the
 -- window in a CTE hides the source ordering from the consumer, so the final
 -- ORDER BY cannot reuse the PK index. The window's own ordering was still free.
 -- Cost of the two-layer structure, which is required because a window
 -- function's output cannot be tested in the SELECT that creates it.
+-- Negligible here; note the shape, not the number.

@@ -55,3 +55,17 @@ ORDER BY datetime_jst;
 -- The window's own ordering was still free. Cost of the two-layer structure,
 -- which is required because a window function's output cannot be tested in the
 -- SELECT that creates it. Negligible here; note the shape, not the number.
+
+-- PLAN (26 Aug, sql/hokkaido.db):
+--   CO-ROUTINE ordered -> CO-ROUTINE (subquery-6)
+--     -> SCAN a USING INDEX sqlite_autoindex_area_demand_1
+--     -> CORRELATED SCALAR SUBQUERY 5 -> SEARCH b USING COVERING INDEX
+--   SCAN (subquery-6) -> SCAN ordered -> USE TEMP B-TREE FOR ORDER BY
+--
+-- SCAN a + SEARCH b belong to the VIEW, not this query: the precedence rule is
+-- one index lookup per row, 1769 of them. Monday's query paid the same.
+-- The temp b-tree is NEW against Monday and was NOT predicted. Wrapping the
+-- window in a CTE hides the source ordering from the consumer, so the final
+-- ORDER BY cannot reuse the PK index. The window's own ordering was still free.
+-- Cost of the two-layer structure, which is required because a window
+-- function's output cannot be tested in the SELECT that creates it.

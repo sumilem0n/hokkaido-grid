@@ -786,3 +786,66 @@ Pruning: none yet. A daily CSV is single-digit KB.
 **What it bought, one day later.** The 46-row finding above came out of comparing two retained
 files' internal stamps. Neither the database nor the logs held that comparison; without the raw
 bytes the 24th would have been a day that failed for an unexamined reason.
+
+## `gaps` — missed-period detection (decided 27 Aug 2026)
+
+### The three classes
+
+| Class | What it is | Exit |
+|---|---|---|
+| Recoverable | Inside the ~2-day tail, not in the DB | Re-fetch. **non-zero** |
+| Unrecoverable | Older than the tail, never fetched | Permanent fact. **0** |
+| Early publication | Complete file, legitimately short — periods not closed at publication | **0**, not an error |
+
+The exit rule is the point of the taxonomy. If the unrecoverable class exits
+non-zero, cron alerts about 8 August every night forever, and within a
+fortnight the alert is ignored — so a recoverable gap, the only kind still
+actionable, arrives inside noise trained to be skipped.
+
+### Classified by position, not by count
+
+`ROWS_PER_DAY = 47` is not a fact. It is a measurement of two normal days.
+The real quantity is how many periods had closed when HEPCO published: the
+24th published 23:13 and closed 46; the 21st and 23rd published 23:42/23:43
+and closed 47. The stamp that settles it is row 2 of every file and is
+discarded by the pipeline.
+
+Rule, which needs no stamp:
+- run ends at the day's last expected slot AND does not start at the first
+  -> **early publication**
+- interior run, or a whole missing day -> real hole; recoverable or
+  unrecoverable by age
+
+23:30 is excluded from the expected calendar entirely: it cannot close
+before midnight, so it is outside the daily source's domain, not a gap.
+47/day is derived from that exclusion, never written as a constant.
+
+**Limit, and the re-ask trigger:** this cannot tell "published 23:13" from
+"published 23:42 and the 23:00 reading was lost in the loader". Both look
+trailing. Fix = capture row 2's stamp and assert the expected count against
+it. Trigger: the first trailing gap that is not explained by publication time.
+
+**Second limit:** `unrecoverable` means the daily FILE can no longer be
+fetched. It does not mean the data is gone — a raw capture may exist in
+`data/raw/` (the 24th does, three times). `gaps` does not check.
+Trigger: the first gap found for a day inside the retained range.
+
+### Two smaller decisions
+
+**`gaps` reads `area_demand`, not `area_demand_current`, and is the only
+place that legitimately does.** The view answers *what is the best value for
+this timestamp*; it cannot answer *which source failed to supply it*, because
+hiding precedence is what the view is for. A hole in the perishable daily
+track becomes invisible the moment the monthly archive covers the period.
+Not licence to bypass the view anywhere else — the reason is repeated in the
+module docstring.
+
+**No ledger for unrecoverable gaps.** They are already permanently derivable
+from the database; a file in `state/` would be a second home for one fact.
+Gives up: no record of *when* a gap was first noticed. Trigger: the first
+time that question is actually asked.
+
+### Ordering constraint
+
+`gaps` runs AFTER the fetch in the cron wrapper. Before it, it reports
+yesterday as recoverable — an alert it created by running early.

@@ -513,9 +513,11 @@ Two exclusions, both of which would otherwise produce mail every night forever:
   A detector working at half-hour grain without this exclusion reports one gap per day, forever,
   on a pipeline that is working correctly.
 
-*Open, 2026-08-25: the 46-row day above means 23:00–23:30 can also be absent. Whether that is a
-third exclusion, a gap, or a source change is the decision due 29 Aug. Do not write the detector
-before it is made — the answer changes what `gaps` reports on 24 August.*
+*Taxonomy, position rule and exit behaviour: see "gaps — missed-period
+detection", below.*
+
+*Resolved 26–27 Aug: early publication — a complete file that is legitimately
+short. Third class in the taxonomy below.*
 
 "Recoverable" is per source, not per date. The same date can be permanently gone from the daily
 track and still pending from monthly, and those two facts are unrelated. Hence `gap_ack` is keyed
@@ -796,6 +798,11 @@ bytes the 24th would have been a day that failed for an unexamined reason.
 | Recoverable | Inside the ~2-day tail, not in the DB | Re-fetch. **non-zero** |
 | Unrecoverable | Older than the tail, never fetched | Permanent fact. **0** |
 | Early publication | Complete file, legitimately short — periods not closed at publication | **0**, not an error |
+
+**Monthly is not a gap source** — see the exclusions at ~line 505, decided
+25 Aug. The `hepco_monthly_areajukyu` entry in `EXCLUDED_SLOTS` exists so
+`slots_for` is total rather than raising on a source that legitimately
+exists; it is not an invitation to run `gaps` against the archive.
 
 The exit rule is the point of the taxonomy. If the unrecoverable class exits
 non-zero, cron alerts about 8 August every night forever, and within a

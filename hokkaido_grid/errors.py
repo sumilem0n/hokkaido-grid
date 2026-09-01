@@ -16,8 +16,8 @@ failure that does not fit a row changes the table first and the code second.
   file arrived intact but                           backoff, then    (EX_TEMPFAIL)
   incomplete                                        escalate
 
-  the day is outside the      SourceUnavailable     skip it, the     69
-  ~2-day retention tail                             loop continues   (EX_UNAVAILABLE)
+  the day is past the source  SourceUnavailable     skip it, the     69
+  module's retention window                         loop continues   (EX_UNAVAILABLE)
 
   the file is not the file    SchemaChanged         halt the run     65
   we expect                                                          (EX_DATAERR)
@@ -28,8 +28,20 @@ failure that does not fit a row changes the table first and the code second.
 The fourth row is residual and deliberate: a failure we never thought about has
 to fail closed, not skip. Backoff and escalation live in the caller -- cron
 today, the week 6 backfill driver later. This module only names the cases.
+
+Row 2 names no number. How wide the retention window is, and the measurements
+behind it, live in hepco_daily.RETENTION_DAYS; each source has its own. A copy
+here was a second place to update, and it went stale -- the table is the
+contract, so a stale figure in it is worse than the same figure stale anywhere
+else. Anything that needs the value reads it from the source module.
+
 ConfigError sits outside the table and exits 78/EX_CONFIG: it fails before any
-source is touched.
+source is touched. main.EXIT_GAPS_FOUND is outside it too, and differently: 3
+is not a failure at all but a finding -- the gaps report ran, and found
+something a fetch can still fill. No exception is raised on that path, so it
+implements no row. It is named here only so this file remains the whole
+inventory of exit codes; a driver that reads codes must learn 3 or its
+unrecognised-code rule will halt on a report that worked.
 
 Nothing in the table uses 0, 1 or 2. Those belong to the interpreter -- 1 for an
 unhandled exception, 2 for argparse's usage error -- and a driver that read 1 as
@@ -131,4 +143,3 @@ class ConfigError(Exception):
     Outside the table: raised before any source is touched, so none of retry,
     skip or halt applies. Exits 78/EX_CONFIG.
     """
-

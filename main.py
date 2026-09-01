@@ -14,13 +14,15 @@ from hokkaido_grid.errors import (
     SourceTransientError,
     SourceUnavailable,
 )
+from hokkaido_grid.gaps import find_gaps, format_report, has_actionable
 from hokkaido_grid.load import load_demand, load_weather, merge_rows
 from hokkaido_grid.sources import hepco_daily
 
 SOURCE_NAME = "hepco_daily_jisseki"
 
-# The four rows of the table in errors.py, plus config. cron reads exit codes,
-# not log levels, and the week 6 backfill driver will read the same set:
+# The four rows of the table in errors.py, plus config and one finding code.
+# cron reads exit codes, not log levels, and the week 6 backfill driver will
+# read the same set:
 # 75 -> sleep and retry, 69 -> next day, 65 and 70 -> stop.
 #
 # None of these is 0, 1 or 2. The interpreter owns those: 1 for an unhandled
@@ -34,6 +36,17 @@ EXIT_SKIP = 69       # row 2: EX_UNAVAILABLE
 EXIT_BUG = 70        # row 4: EX_SOFTWARE, the residual
 EXIT_TRANSIENT = 75  # row 1: EX_TEMPFAIL
 EXIT_CONFIG = 78     # EX_CONFIG, kept distinct from argparse's own 2 for usage
+
+EXIT_GAPS_FOUND = 3   # a finding, not a failure: gaps exist that a
+                      # fetch can still fill. Off 1 and 2 for the reason
+                      # above; outside the table like EXIT_CONFIG, since no
+                      # exception was raised and nothing went wrong.
+                      # Out of numeric order deliberately -- it does not
+                      # belong to the sysexits run above it. Note this is the
+                      # first code a driver can meet that means neither "done"
+                      # nor "stop", so the rule that an unrecognised code is
+                      # halt now has something real to recognise: a driver
+                      # that has not learned 3 halts on a successful report.
 
 log = logging.getLogger("main")
 
@@ -64,12 +77,20 @@ def build_parser():
     weather = sub.add_parser("weather", help="load a weather JSON file")
     weather.add_argument("path", type=Path, help="path to an Open-Meteo JSON file")
 
+    gaps = sub.add_parser("gaps", help="report missing periods in a loaded source")
+    gaps.add_argument("source", help="source name, e.g. hepco_daily_jisseki")
+    gaps.add_argument("start", help="YYYY-MM-DD")
+    gaps.add_argument("end", help="YYYY-MM-DD")
+
     return parser
 
 
 def cmd_daily(args, cfg):
     # Yesterday, not today: today's file exists but is still being written to,
-    # and retention is two days, so yesterday is both complete and still there.
+    # so today can only ever yield a partial day. How long yesterday stays
+    # reachable is hepco_daily.RETENTION_DAYS and is stated there, with the
+    # measurements behind it -- restating it here was a second copy that had
+    # already gone stale once.
     day = date.fromisoformat(args.date) if args.date else date.today() - timedelta(days=1)
 
     # Logged before the fetch so the traceback of whatever main() catches has
@@ -112,7 +133,36 @@ def cmd_weather(args, cfg):
     return EXIT_OK
 
 
-COMMANDS = {"daily": cmd_daily, "monthly": cmd_monthly, "weather": cmd_weather}
+def cmd_gaps(args, cfg):
+    log.info("gaps: %s %s..%s", args.source, args.start, args.end)
+    conn = sqlite3.connect(cfg.db_path)
+    try:
+        # tail_days is passed by keyword, so this call does not depend on where
+        # it sits in the signature. RETENTION_DAYS is read from the module that
+        # measured it rather than restated here: gaps.py requires the argument
+        # precisely so the number has one home, and a literal at this call site
+        # would put a second copy back.
+        found = find_gaps(
+            conn,
+            args.source,
+            date.fromisoformat(args.start),
+            date.fromisoformat(args.end),
+            tail_days=hepco_daily.RETENTION_DAYS,
+        )
+    finally:
+        conn.close()
+    # stdout, not the log: this is a report for a person, and it should survive
+    # being piped somewhere while the log goes wherever the config sends it.
+    print(format_report(found))
+    return EXIT_GAPS_FOUND if has_actionable(found) else EXIT_OK
+
+
+COMMANDS = {
+    "daily": cmd_daily,
+    "monthly": cmd_monthly,
+    "weather": cmd_weather,
+    "gaps": cmd_gaps,
+}
 
 
 def main(argv=None):

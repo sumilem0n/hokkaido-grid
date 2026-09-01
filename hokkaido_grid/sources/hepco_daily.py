@@ -1,6 +1,6 @@
 """Fetch one day of HEPCO Hokkaido area demand (jisseki) as half-hourly rows.
 
-Retention on this feed is roughly two days, so a missed capture is permanent.
+Retention on this feed is one day, so a missed capture is permanent.
 This module therefore never returns [] for a day it could not get: every
 failure leaves by exception, classified as permanent or retryable.
 

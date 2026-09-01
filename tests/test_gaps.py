@@ -29,14 +29,14 @@ def test_unknown_source_raises():
 
 def test_trailing_run_is_early_publication():
     run = [datetime(2026, 8, 24, 23, 0)]
-    assert classify(DAILY, run, today=date(2026, 8, 26)).kind == "early_publication"
+    assert classify(DAILY, run, today=date(2026, 8, 26), tail_days=2).kind == "early_publication"
 
 
 def test_whole_day_is_not_early_publication():
     """The trap: a whole missing day also ends at the day's last slot."""
     day = date(2026, 8, 26)
     run = expected_periods(DAILY, day, day)
-    g = classify(DAILY, run, today=date(2026, 8, 27))
+    g = classify(DAILY, run, today=date(2026, 8, 27), tail_days=2)
     assert g.kind != "early_publication"
     assert g.kind == "recoverable"
     assert g.periods == 47
@@ -44,13 +44,18 @@ def test_whole_day_is_not_early_publication():
 
 def test_interior_run_inside_tail_is_recoverable():
     run = [datetime(2026, 8, 26, 10, 0), datetime(2026, 8, 26, 10, 30)]
-    assert classify(DAILY, run, today=date(2026, 8, 27)).kind == "recoverable"
+    assert classify(DAILY, run, today=date(2026, 8, 27), tail_days=2).kind == "recoverable"
 
 
 def test_old_run_is_unrecoverable():
     run = [datetime(2026, 8, 8, 3, 0)]
-    assert classify(DAILY, run, today=date(2026, 8, 27)).kind == "unrecoverable"
+    assert classify(DAILY, run, today=date(2026, 8, 27), tail_days=2).kind == "unrecoverable"
 
+def test_age_equals_tail_is_unrecoverable():
+    """Age 2 with tail_days=2: the boundary HEPCO 404'd on 31 Aug."""
+    run = [datetime(2026, 8, 29, 10, 0)]
+    g = classify(DAILY, run, today=date(2026, 8, 31), tail_days=2)
+    assert g.kind == "unrecoverable"
 
 def test_runs_join_across_midnight():
     missing = [datetime(2026, 8, 24, 23, 0), datetime(2026, 8, 25, 0, 0)]
@@ -68,7 +73,7 @@ def test_missing_is_expected_minus_present():
 
 
 def test_only_recoverable_is_actionable():
-    recent = classify(DAILY, [datetime(2026, 8, 26, 10, 0)], today=date(2026, 8, 27))
-    old = classify(DAILY, [datetime(2026, 8, 8, 3, 0)], today=date(2026, 8, 27))
+    recent = classify(DAILY, [datetime(2026, 8, 26, 10, 0)], today=date(2026, 8, 27), tail_days=2)
+    old = classify(DAILY, [datetime(2026, 8, 8, 3, 0)], today=date(2026, 8, 27), tail_days=2)
     assert has_actionable([recent]) is True
     assert has_actionable([old]) is False

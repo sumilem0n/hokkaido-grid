@@ -22,7 +22,10 @@ row exists with its date, index and both boundary times filled in and all
 three measurement columns empty, at every age the file was reachable. So a
 complete daily file is 47 rows, not 48, and the missing period comes from the monthly file. 
 
-Retention is roughly two days (see RETENTION_DAYS below), and
+Retention is one day, not two: HEPCO serves yesterday and 404s at
+age 2 (measured 31 Aug 2026 -- ages 2, 3, 4 all 404, age 1 served).
+RETENTION_DAYS = 2 with `age >= RETENTION_DAYS` is correct and
+unchanged; the servable window is the ages below it. And
 the file is rewritten intraday -- 47 rows is what a *finished* file looks
 like, not what is available all day. The 2026-08-22 file's banner gave
 ファイル更新時間 23:46:29, ~16 minutes after the final period closes

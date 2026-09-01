@@ -8,6 +8,10 @@ what the view is for. A hole in the perishable daily track becomes
 invisible through the view the moment the monthly archive covers the
 same period. Not licence to bypass the view anywhere else.
 
+The module classifies. It does not decide how loudly anyone should react
+to a classification -- that is a fact about intent and it stays with the
+caller, the same split hepco_daily.py makes at its 404 branch.
+
 Taxonomy and the position rule: see FIELDS.md, "gaps -- missed-period
 detection (decided 27 Aug 2026)".
 """
@@ -30,8 +34,12 @@ ALL_SLOTS = tuple(time(h, m) for h in range(24) for m in (0, 30))
 # never written down as a constant: ROWS_PER_DAY = 47 was a measurement of two
 # normal days that turned out not to be a fact.
 EXCLUDED_SLOTS = {
-    # 23:30 cannot close before midnight, so the daily file never carries it.
-    # Not a gap -- outside this source's domain.
+    # HEPCO writes all 48 rows and fills the ones closed at publication.
+    # 23:30 cannot close before midnight, so the daily file carries that row
+    # with its date and both boundary times filled in and the measurement
+    # columns empty, at every age the file is reachable; the fetcher drops it
+    # rather than loading an empty period. Not a gap -- outside this source's
+    # domain. One exclusion, stated once.
     "hepco_daily_jisseki": frozenset({time(23, 30)}),
     # Corrected after the fact; carries all 48. Measured: 1440 rows / 30 days.
     "hepco_monthly_areajukyu": frozenset(),
@@ -94,10 +102,11 @@ def loaded_periods(conn, source: str, start: date, end: date) -> set[datetime]:
     tested against in-memory SQLite later.
 
     `demand_mw IS NOT NULL` caught nothing on 27 Aug (measured: 0 NULL rows,
-    376 daily rows over 8 days = 47.0 exactly, so the loader drops the empty
-    trailing row). It stays because that behaviour is documented nowhere: if
-    the loader ever starts inserting empty periods as NULL, this clause turns
-    a silent miscount into a visible gap. A row is not a reading.
+    376 daily rows over 8 days = 47.0 exactly, because the fetcher skips the
+    unfilled trailing row instead of inserting it). It stays because that
+    behaviour is documented nowhere: if the loader ever starts inserting
+    unclosed periods as NULL, this clause turns a silent miscount into a
+    visible gap. A row is not a reading.
     """
     sql = """
         SELECT datetime_jst
@@ -160,9 +169,7 @@ def _adjacent(
     )
 
 
-def classify(
-    source: str, run: list[datetime], today: date, tail_days: int = 2
-) -> Gap:
+def classify(source: str, run: list[datetime], tail_days: int, today: date) -> Gap:
     """Label one run. Position first, then age.
 
     All three conditions of the early-publication test are load-bearing. Drop
@@ -173,8 +180,19 @@ def classify(
     `age` is measured from the run's FIRST timestamp -- its oldest end -- so a
     run spanning several days is judged by its worst case. Stated limitation.
 
-    `tail_days` is a parameter, not a constant: the tail's real boundary has
-    never been observed. 2 is a working assumption.
+    `tail_days` has no default. The tail is a property of the source's feed,
+    measured where the feed is fetched, and a default here would be a second
+    copy of that measurement free to drift from the first -- and free to be
+    read as an answer rather than as an input. The comparison is `age <
+    tail_days`, not `<=`: the tail counts days still reachable starting at
+    age 0, so a tail of N stops at age N-1. `<=` classified the first
+    unreachable day as recoverable and sent an operator to re-fetch a 404.
+
+    The value in force goes into the reason string. "inside the tail" is a
+    verdict with its premise removed: a report written under one tail and read
+    under another agrees with neither, and nothing in the line says which. The
+    tail has already moved once. Recording it is what makes an old report
+    re-checkable instead of merely re-readable.
     """
     slots = slots_for(source)
     first, last = run[0], run[-1]
@@ -193,7 +211,7 @@ def classify(
         )
 
     age = (today - first.date()).days
-    if age <= tail_days:
+    if age < tail_days:
         return Gap(
             source,
             first,
@@ -208,7 +226,7 @@ def classify(
         last,
         len(run),
         KIND_UNRECOVERABLE,
-        f"{age} days old; past the ~{tail_days}-day tail (a raw capture may exist)",        
+        f"{age} days old; past the ~{tail_days}-day tail (a raw capture may exist)",
     )
 
 
@@ -217,8 +235,8 @@ def find_gaps(
     source: str,
     start: date,
     end: date,
+    tail_days: int,
     today: date | None = None,
-    tail_days: int = 2,
 ) -> list[Gap]:
     """Compose the pieces. The only place they meet.
 
@@ -230,7 +248,7 @@ def find_gaps(
     expected = expected_periods(source, start, end)
     present = loaded_periods(conn, source, start, end)
     runs = group_runs(source, missing_periods(expected, present))
-    return [classify(source, run, today, tail_days) for run in runs]
+    return [classify(source, run, tail_days, today) for run in runs]
 
 
 def format_report(gaps: list[Gap]) -> str:
@@ -253,10 +271,12 @@ def format_report(gaps: list[Gap]) -> str:
 def has_actionable(gaps: list[Gap]) -> bool:
     """Whether anything here can still be acted on.
 
-    The exit rule, in one predicate: only the recoverable class is actionable.
-    If the unrecoverable class exited non-zero, cron would alert about
-    8 August every night forever, and within a fortnight the alert is ignored
-    -- at which point a recoverable gap, the only kind that can still be
-    fixed, arrives inside noise trained to be skipped.
+    A predicate, not a policy: what a caller does with it -- exit status,
+    alert, silence -- is the caller's to choose, and the choice is worth
+    making carefully. A caller that reacts to the unrecoverable class as
+    urgently as to the recoverable one alerts about 8 August every night
+    forever, and within a fortnight the alert is ignored -- at which point a
+    recoverable gap, the only kind that can still be fixed, arrives inside
+    noise trained to be skipped.
     """
     return any(g.kind == KIND_RECOVERABLE for g in gaps)

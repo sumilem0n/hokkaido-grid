@@ -7,7 +7,7 @@ catch.
 """
 
 
-def test_schema_loads(conn):
-    tables = {row[0] for row in conn.execute(
+def test_schema_loads(schema):
+    tables = {row[0] for row in schema.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table';")}
     assert {"area_demand", "weather_hourly"} <= tables

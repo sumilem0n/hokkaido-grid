@@ -123,7 +123,7 @@ def test_unparseable_datetime_raises_schema_changed(tmp_path):
     assert isinstance(excinfo.value.__cause__, ValueError)
 
 
-def test_round_trip_through_loader(tmp_path, conn):
+def test_round_trip_through_loader(tmp_path, schema):
     """Parse, load, select back: the only test that crosses both modules.
 
     Everything above stops at what parse_monthly_demand returns, which cannot
@@ -134,9 +134,9 @@ def test_round_trip_through_loader(tmp_path, conn):
     source is selected too: the stamp is the loader's, and merge_rows'
     precedence rule is a comparison against this exact string.
     """
-    load_demand(conn, write_demand_csv(tmp_path))
+    load_demand(schema, write_demand_csv(tmp_path))
 
-    written = conn.execute(
+    written = schema.execute(
         "SELECT datetime_jst, demand_mw, solar_mw, wind_mw, supply_total_mw, source "
         "FROM area_demand ORDER BY datetime_jst;"
     ).fetchall()

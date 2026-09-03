@@ -9,7 +9,7 @@ Run from the repo root (~/hokkaido-grid):
     uv run python hokkaido_grid/load.py
 
 The paths below are relative to the working directory, which is why that
-instruction exists. main.py anchors its paths to __file__ instead and does not
+instruction exists. config.py anchors its paths to __file__ instead and does not
 need it; this module keeps the constraint until it is given the same treatment.
 
 Three writers, three delete scopes, and one rule under all of them: a DELETE

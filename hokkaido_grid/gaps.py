@@ -103,10 +103,14 @@ def loaded_periods(conn, source: str, start: date, end: date) -> set[datetime]:
 
     `demand_mw IS NOT NULL` caught nothing on 27 Aug (measured: 0 NULL rows,
     376 daily rows over 8 days = 47.0 exactly, because the fetcher skips the
-    unfilled trailing row instead of inserting it). It stays because that
-    behaviour is documented nowhere: if the loader ever starts inserting
-    unclosed periods as NULL, this clause turns a silent miscount into a
-    visible gap. A row is not a reading.
+    unfilled trailing row instead of inserting it). 
+    It cannot catch anything today: the schema declares demand_mw NOT NULL, 
+    so the database refuses the row on write -- measured, three of four routes 
+    to a NULL raise IntegrityError, and the fourth (INSERT OR IGNORE) writes 
+    nothing at all and is used by no loader path. The clause is not a guard 
+    against the loader; it is a guard against the constraint being dropped. 
+    Drop NOT NULL and unfilled periods become storable, and without this clause 
+    they count as readings -- a period count that looks right and is wrong, with nothing to notice.
     """
     sql = """
         SELECT datetime_jst

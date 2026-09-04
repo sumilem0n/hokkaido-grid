@@ -232,3 +232,51 @@ def test_the_set_is_for_lookup_not_deduplication(dataset):
     # set to collapse in the first place.
     with pytest.raises(sqlite3.IntegrityError):
         _insert(dataset, "2026-01-15 00:00")
+
+COLLISION_TS = "2026-01-15 00:00"
+
+
+def test_the_view_keeps_the_monthly_row_at_a_collision(dataset):
+    """Precedence at a collision: one row survives, and it is the right one.
+
+    The five assertions fail under different edits.
+
+    The row count is an equality against a positive integer because the failure
+    it is aimed at returns zero, not two. A `<=` in the rank clause admits no
+    row at all, and `assert rows` or `>= 1` reads that as an ordinary absence.
+
+    Source and demand_mw assert the same fact from two sides. The label alone
+    survives a rank inversion if it is being read off the losing row's alias;
+    3125.0 is carried only by the monthly row, so it ties the surviving row's
+    identity to its content.
+
+    The count of 2 in the raw table is what stops the rest from passing
+    vacuously. INSERT OR IGNORE drops a conflicting row silently here, so a
+    fixture that stored one row instead of two satisfies everything above it
+    while proving nothing about precedence.
+
+    The last pair is scope. `<=` does not only empty the collision, it empties
+    every timestamp: a row always finds itself in the subquery, its own rank is
+    never strictly less than its own, and `<=` turns that self-match into an
+    exclusion for every row in the table. 4 against 5 catches that where a
+    collision-local count cannot -- the surplus row is 2026-02-01, a different
+    month with no collision anywhere near it.
+    """
+    rows = dataset.execute(
+        "SELECT source, demand_mw FROM area_demand_current WHERE datetime_jst = ?",
+        (COLLISION_TS,),
+    ).fetchall()
+
+    assert len(rows) == 1
+
+    source, demand_mw = rows[0]
+    assert source == MONTHLY
+    assert demand_mw == 3125.0
+
+    raw = dataset.execute(
+        "SELECT COUNT(*) FROM area_demand WHERE datetime_jst = ?", (COLLISION_TS,)
+    ).fetchone()[0]
+    assert raw == 2
+
+    assert dataset.execute("SELECT COUNT(*) FROM area_demand_current").fetchone()[0] == 4
+    assert dataset.execute("SELECT COUNT(*) FROM area_demand").fetchone()[0] == 5

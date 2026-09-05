@@ -48,6 +48,15 @@ EXIT_GAPS_FOUND = 3   # a finding, not a failure: gaps exist that a
                       # halt now has something real to recognise: a driver
                       # that has not learned 3 halts on a successful report.
 
+EXIT_REFUSED = 4      # init-db found objects already in the database and
+                      # declined. Like 3, a finding rather than a failure --
+                      # nothing raised, nothing broke, the command simply will
+                      # not act on a database it did not create. Its own code
+                      # rather than 65, because 65 is row 3's and means a source
+                      # file changed shape underneath us. And unlike 3, the
+                      # unrecognised-code-is-halt rule costs nothing here: halt
+                      # is what a driver meeting this should do anyway.
+
 log = logging.getLogger("main")
 
 
@@ -81,7 +90,7 @@ def build_parser():
     gaps.add_argument("source", help="source name, e.g. hepco_daily_jisseki")
     gaps.add_argument("start", help="YYYY-MM-DD")
     gaps.add_argument("end", help="YYYY-MM-DD")
-
+    sub.add_parser("init-db", help="create the tables in an empty database")
     return parser
 
 
@@ -112,6 +121,80 @@ def cmd_daily(args, cfg):
     log.info("ok: %s, %d rows", day, len(rows))
     return EXIT_OK
 
+# A subcommand, not a shell script or a make target, for the same reason
+# cmd_gaps reads RETENTION_DAYS out of hepco_daily instead of writing the
+# number down again: the database path has one home, and that home is
+# load_config. A script or a Makefile would have to work the path out a second
+# way, and the second way is the one that goes stale when config.toml moves --
+# with the failure being a schema quietly applied to the wrong file. Being in
+# here also means --config already works, the log is already configured, and
+# the exit code comes out of the same vocabulary as everything else rather than
+# being whatever the last command in a recipe happened to return.
+#
+# sql/schema.sql is the only thing read. Migrations 001 and 002 are already
+# folded into it -- the composite key and the precedence view are in the file
+# below, not replayed from sql/migrations/. Those files are kept because they
+# carry the reasoning (002 has the '<' vs '<=' trap and the 22 Aug
+# verification), and reasoning is worth keeping whether or not anything
+# executes it. They are a record, not a build step. The schema header says the
+# file is regenerated from `.schema` and hand-headed after a migration; that
+# regeneration is what keeps this command honest, and it is a human step.
+#
+# Refuse if anything is already there. This buys one property -- init-db can
+# never be the thing that destroyed the database -- at the cost of every other
+# property. There is no repair path: a database missing one table has to be
+# fixed by hand. There is no re-apply: edit schema.sql and this command will
+# not pick the change up, because the moment there is a table it stops. A
+# rebuild means deleting the file yourself, which is a deliberate act, taken
+# by someone who has looked at what is in there. That asymmetry is the whole
+# design -- the cost is inconvenience, and the thing avoided is a DROP.
+SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "schema.sql"
+
+
+def cmd_init_db(args, cfg):
+    # The file existing proves nothing: sqlite3.connect() creates one on the
+    # spot, so this very line makes a file appear at a path that had none.
+    # Testing for the file would therefore refuse on a database it had just
+    # created itself. What is being asked is whether the database has contents,
+    # and sqlite_master -- SQLite's own catalogue of tables, views, indexes and
+    # triggers -- is where the contents are named. Empty catalogue, empty
+    # database.
+    log.info("init-db: %s", cfg.db_path)
+    conn = sqlite3.connect(cfg.db_path)
+    try:
+        (objects,) = conn.execute("SELECT count(*) FROM sqlite_master;").fetchone()
+        if objects:
+            # stderr, not the log: whoever ran this is watching a terminal, and
+            # the refusal is the whole output of the run.
+            print(
+                f"{cfg.db_path}: already holds {objects} "
+                f"object{'' if objects == 1 else 's'}, nothing was touched",
+                file=sys.stderr,
+            )
+            return EXIT_REFUSED
+
+        # executescript, not execute: execute takes exactly one statement and
+        # raises on a file holding several, so it cannot apply this one at all.
+        # Splitting on ';' would be a third parser in the repo and a wrong one.
+        # Three of the semicolons in schema.sql sit inside the header comment,
+        # and '--' only comments out the rest of its own line -- cut there and
+        # the text after the cut arrives as bare SQL. CREATE TABLE
+        # weather_hourly is attached to one of those fragments, so the naive
+        # splitter builds area_demand and the view, silently loses the weather
+        # table, and reports four of its seven pieces as fine on the way past.
+        #
+        # No `with conn:` around it. executescript commits whatever transaction
+        # is open before it starts, so the block would be decoration claiming
+        # an atomicity it does not provide. A script that dies halfway leaves a
+        # half-built database, which the check above will then refuse to touch
+        # -- correctly, and that is the case the paragraph about the missing
+        # repair path is describing.
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    finally:
+        conn.close()
+
+    print(f"{cfg.db_path}: schema applied from {SCHEMA_PATH}")
+    return EXIT_OK
 
 def cmd_monthly(args, cfg):
     log.info("monthly: loading %s", args.path)
@@ -162,6 +245,7 @@ COMMANDS = {
     "monthly": cmd_monthly,
     "weather": cmd_weather,
     "gaps": cmd_gaps,
+    "init-db": cmd_init_db,
 }
 
 

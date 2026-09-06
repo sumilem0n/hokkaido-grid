@@ -221,17 +221,59 @@ def replace_rows(conn, table, rows, source, *, day=None):
         start = f"{scope} 00:00"
         end = f"{(day + timedelta(days=1)).isoformat()} 00:00"
 
+
     with conn:                             # one transaction: DELETE + INSERT together
         deleted = conn.execute(
             f"DELETE FROM {table} "
             "WHERE source = ? AND datetime_jst >= ? AND datetime_jst < ?;",
             (source, start, end),
         ).rowcount
-        _insert(conn, table, columns, payload)
+        written = _insert(conn, table, columns, payload)
+
+        # Shrink guard. Two decisions, both written down because neither is the
+        # only defensible one.
+        #
+        # Where it lives: here, not in load_demand. The transaction is here. A
+        # check in load_demand runs after `with conn:` has committed, so it
+        # would report the truncation in the same run that made it permanent --
+        # an error message over a wrecked month. Putting it before the call is
+        # no better: it would have to count the existing rows itself, which
+        # means a second copy of the month window and a read outside the
+        # transaction that writes. The cost of being here is that it covers
+        # every caller, including day=<date> forward capture and the week 6
+        # backfill. That is deliberate: a short day is the same failure as a
+        # short month.
+        #
+        # What trips it: any shrink. written < deleted, no tolerance, no
+        # threshold. A percentage would need a number nobody has measured, and
+        # the number would have to be wrong for one of the two cadences -- 47
+        # periods daily against 48 monthly is a real difference between callers
+        # that a single figure cannot straddle. Any shrink has no number in it,
+        # so it cannot be wrong for a caller it has not met. The cost is a
+        # corrected month that genuinely loses a period: it has to be loaded by
+        # hand. That is rarer than a truncated download, and it is the case
+        # where a human should be looking anyway.
+        #
+        # `deleted and` is not defensiveness -- it is the hole. There is
+        # nothing to compare against on a first load, so the guard is blind
+        # there. See test_first_load_is_unguarded.
+                # `deleted and` is not defensiveness -- it is the hole. There is
+        # nothing to compare against on a first load, so the guard is blind
+        # there. See test_first_load_is_unguarded.
+        #
+        # ValueError is a placeholder. This belongs in errors.py as a fifth
+        # sibling; SchemaChanged was rejected because the file's shape is
+        # intact -- only its ending is missing, and "every later file is
+        # suspect" is false for a short month. Owed, week 9.
+        
+        if deleted and written < deleted:
+            raise ValueError(
+                f"{table}: {source} {scope} shrank -- deleted {deleted}, "
+               f"wrote {written}. Truncated file? Nothing was changed."
+            )
 
     logger.info("%s: deleted %s, inserted %s (%s, scope=%s)",
-                table, deleted, len(payload), source, scope)
-
+                table, deleted, written, source, scope)           
 
 def merge_rows(conn, table, rows, source):
     """Fragment append: INSERT with conflict handling, no DELETE.

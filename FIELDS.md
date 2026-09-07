@@ -837,6 +837,13 @@ fetched. It does not mean the data is gone — a raw capture may exist in
 `data/raw/` (the 24th does, three times). `gaps` does not check.
 Trigger: the first gap found for a day inside the retained range.
 
+**Third limit — the shrink guard is blind on first load.** `replace_rows`
+raises when it writes fewer rows than it deleted (`cdcd0b9`), which catches a
+truncated file overwriting a month that is already loaded. On a first load
+`deleted` is 0, the comparison is skipped, and a truncated file loads clean.
+Every month of the backfill is a first load, so the backfill path is
+unguarded and needs its own count check. Trigger: writing the backfill.
+
 ### Two smaller decisions
 
 **`gaps` reads `area_demand`, not `area_demand_current`, and is the only

@@ -280,3 +280,71 @@ def test_the_view_keeps_the_monthly_row_at_a_collision(dataset):
 
     assert dataset.execute("SELECT COUNT(*) FROM area_demand_current").fetchone()[0] == 4
     assert dataset.execute("SELECT COUNT(*) FROM area_demand").fetchone()[0] == 5
+
+# The demand_mw carried by the daily row at COLLISION_TS -- the row the view
+# discards. A literal, not a query: computing it from the fixture would make
+# the assertion below true by construction and it would pass under any view at
+# all. It lives next to COLLISION_TS because the two are one fact about the
+# dataset fixture, and a change to either has to move the other.
+DISCARDED_DAILY_MW = 3120.0
+
+
+def test_the_view_removes_one_reading_and_leaves_every_other_untouched(dataset):
+    """Precedence measured by value, which the counts above cannot do.
+
+    The neighbouring test counts. It establishes that one row survives the
+    collision, that the survivor is the monthly one, and that 5 raw rows become
+    4 in the view. All three are statements about which rows exist. None of
+    them is a statement about what those rows carry away from the collision, or
+    about the four timestamps that never collide at all -- outside COLLISION_TS
+    the view's readings are asserted nowhere in this file.
+
+    That leaves a view that filters correctly and reports wrongly. The edits
+    that do it are the ones sparing the collision row and touching the rest: a
+    CASE or a unit conversion applied to daily rows in the SELECT list leaves
+    3125.0 at COLLISION_TS alone, leaves the row count at 4, and changes what
+    the other three rows report. Every assertion above stays green, because
+    none of them reads a value anywhere except COLLISION_TS. This one does
+    not, because the sum reads all five rows.
+
+    An edit that alters the collision row itself -- averaging the two sources
+    rather than choosing between them -- is already caught above by
+    `demand_mw == 3125.0`. This test is not a second copy of that assertion.
+    It covers the four timestamps that assertion does not reach.
+
+    The assertion is the difference, not the view total. Raw minus view equals
+    the discarded daily row -- a relationship between two numbers the fixture
+    produces, the same shape as 4-against-5 above, so it survives a fixture
+    that grows a sixth row and fails honestly if the discarded row changes
+    value. A hardcoded 13145 would go red on any edit to the fixture with
+    nothing in the failure to say which edit.
+
+    It is an equality, not an inequality. `raw_total != view_total` is true
+    whenever the view drops any row, including the monthly one -- it is green
+    under the exact precedence inversion the test beside it exists to catch.
+
+    No JOIN, and no source filter. Joining the table to the view on
+    datetime_jst multiplies the collision timestamp against itself and measures
+    the join instead of the view. Filtering to one source removes the collision
+    from one side or the other, and the collision is the whole subject.
+
+    Both sums are over the whole table, not over COLLISION_TS. A
+    collision-local sum agrees with a view that over-excludes somewhere else --
+    the same reason the count above is 4 against 5 globally rather than 1 at
+    the collision, and the same surplus row (2026-02-01) is what carries the
+    check past the month where the collision sits.
+
+    Exact `==` holds while every fixture value is exactly representable as a
+    float. If one ever is not, this becomes pytest.approx(abs=1e-9) -- and that
+    tolerance would be about REAL round-tripping, not about the number, which
+    stays exact.
+    """
+    raw_total = dataset.execute(
+        "SELECT sum(demand_mw) FROM area_demand"
+    ).fetchone()[0]
+
+    view_total = dataset.execute(
+        "SELECT sum(demand_mw) FROM area_demand_current"
+    ).fetchone()[0]
+
+    assert raw_total - view_total == DISCARDED_DAILY_MW

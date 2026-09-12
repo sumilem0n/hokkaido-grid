@@ -105,9 +105,12 @@ against any day captured since, and has not been run.
 ## How it runs
 
 `bin/fetch_daily.sh` wraps `main.py daily <yesterday>` and runs from cron at
-`0 8` and `0 13`, plus an `@reboot` line added as interim cover. The `0 8` slot
-has never fired — the machine has booted after 08:00 and plain cron does not run
-jobs it missed — so the 13:00 slot is the load-bearing one.
+`0 8` and `0 13`, plus an `@reboot` line added as interim cover. Both scheduled
+slots fire. `@reboot` fires in addition to them rather than in place of them, so
+a day with reboots in it runs the job more often than the crontab schedules: four
+runs on 2026-09-12 against the two scheduled. Re-runs are harmless — the daily
+path merges rather than replaces, so a second fetch of the same day updates rows
+in place and changes nothing.
 
 - `state/last_success` — one ISO-8601 line, truncated on each write, written only
   on exit 0. The heartbeat.
@@ -179,5 +182,3 @@ not 48. It does not show that the numbers in the database are right.
   `requests.get` directly. The only importer of `get_text` is `tools/try_get.py`.
   On a feed this shallow, one network blip is currently one lost day.
 - **No weather fetcher.** `weather_hourly` is fed by hand.
-- **`logs/cron.log` lines carry no timestamp.** Two runs minutes apart are
-  indistinguishable in the log.

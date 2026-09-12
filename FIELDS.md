@@ -735,10 +735,16 @@ still lands inside the one usable day.
 - **Staleness threshold undecided.** How old is too old depends on the cron
   schedule and on how many consecutive missed runs are tolerable. Decide with
   `gaps`, not before.
-- **`logs/cron.log` lines carry no timestamp — NEW 2026-08-25.** Two runs three
-  minutes apart on the 25th wrote entries indistinguishable from each other. Week
-  8's bar is that a week of logs should explain events without opening the code;
-  this does not meet it.
+- **`logs/cron.log` lines carry Python's timestamps, ISO-8601 with offset —
+  NEW 2026-08-25, resolved 2026-09-12.** Two runs three minutes apart on the 25th
+  wrote entries indistinguishable from each other; every line now opens with one
+  `%Y-%m-%dT%H:%M:%S%z` stamp from `logging.basicConfig`, so runs are separable
+  and the offset says which zone the process ran under. Week 8's bar is that a
+  week of logs should explain events without opening the code; this meets it for
+  ordering. The offset comes from the process `TZ`, not from the data — a run
+  under a zone other than Asia/Tokyo will stamp its own offset beside JST
+  `datetime_jst` values, which is visible rather than silent, and is the reason
+  the offset is carried at all.
 - **This does nothing about a machine that is off for a full calendar day.** The
   target file crosses to age 2 and is unrecoverable; a heartbeat records the loss,
   it does not prevent it. Daily uptime is the assumption the whole daily track

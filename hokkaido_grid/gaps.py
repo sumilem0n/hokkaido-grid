@@ -19,6 +19,7 @@ detection (decided 27 Aug 2026)".
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sqlite3
 from datetime import date, datetime, time, timedelta
 
 PERIOD = timedelta(minutes=30)
@@ -94,7 +95,7 @@ def expected_periods(source: str, start: date, end: date) -> list[datetime]:
     return out
 
 
-def loaded_periods(conn, source: str, start: date, end: date) -> set[datetime]:
+def loaded_periods(conn: sqlite3.Connection, source: str, start: date, end: date) -> set[datetime]:
     """Periods that carry an actual reading, start..end inclusive.
 
     The only impure function in this module: takes `conn` rather than opening
@@ -235,7 +236,7 @@ def classify(source: str, run: list[datetime], tail_days: int, today: date) -> G
 
 
 def find_gaps(
-    conn,
+    conn: sqlite3.Connection,
     source: str,
     start: date,
     end: date,

@@ -29,7 +29,10 @@ bug wearing the fix that was supposed to end it.
 import csv
 import json
 import logging
-from datetime import datetime, timedelta
+import sqlite3
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 from hokkaido_grid.errors import SchemaChanged
 
@@ -56,7 +59,7 @@ REQUIRED_WEATHER_KEYS = (
 )
 
 
-def _to_float(value):
+def _to_float(value: str | None) -> float | None:
     """Blank/missing cell -> None (NULL); a real number -> float."""
     try:
         return float(value)
@@ -64,7 +67,7 @@ def _to_float(value):
         return None
 
 
-def parse_monthly_demand(path):
+def parse_monthly_demand(path: Path) -> tuple[list[dict[str, Any]], int]:
     """Read the monthly エリア需給 file into canonical rows. No database.
 
     Split out of load_demand 2026-08-07 so parsing is testable without a
@@ -125,7 +128,9 @@ def parse_monthly_demand(path):
     return rows, dropped
 
 
-def _prepare(table, rows, source):
+def _prepare(
+    table: str, rows: list[dict[str, Any]], source: str
+) -> tuple[list[str], list[tuple[Any, ...]]]:
     """Validate rows and build the payload tuples. Shared by both writers.
 
     The empty check earns its place twice over. For merge, no rows means the
@@ -157,7 +162,13 @@ def _prepare(table, rows, source):
     return columns, payload
 
 
-def _insert(conn, table, columns, payload, tail=""):
+def _insert(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: list[str],
+    payload: list[tuple[Any, ...]],
+    tail: str = "",
+) -> int:
     """Shared: assemble the INSERT and run it. Returns rows actually written."""
     insert_cols = columns + ["source"]
     placeholders = ", ".join("?" * len(insert_cols))
@@ -166,7 +177,7 @@ def _insert(conn, table, columns, payload, tail=""):
     return conn.executemany(sql, payload).rowcount
 
 
-def _month_window(rows):
+def _month_window(rows: list[dict[str, Any]]) -> tuple[str, str, str]:
     """The half-open [start, end) span of the single calendar month in `rows`.
 
     datetime_jst is fixed-width ISO TEXT, so the first seven characters are the
@@ -186,7 +197,14 @@ def _month_window(rows):
     return scope, start, end
 
 
-def replace_rows(conn, table, rows, source, *, day=None):
+def replace_rows(
+    conn: sqlite3.Connection,
+    table: str,
+    rows: list[dict[str, Any]],
+    source: str,
+    *,
+    day: date | None = None,
+) -> None:
     """Insert dict-rows into `table`, replacing this source's rows in one span.
 
     Scope is the caller's decision because only the caller knows its cadence.
@@ -257,9 +275,6 @@ def replace_rows(conn, table, rows, source, *, day=None):
         # `deleted and` is not defensiveness -- it is the hole. There is
         # nothing to compare against on a first load, so the guard is blind
         # there. See test_first_load_is_unguarded.
-                # `deleted and` is not defensiveness -- it is the hole. There is
-        # nothing to compare against on a first load, so the guard is blind
-        # there. See test_first_load_is_unguarded.
         #
         # ValueError is a placeholder. This belongs in errors.py as a fifth
         # sibling; SchemaChanged was rejected because the file's shape is
@@ -275,7 +290,10 @@ def replace_rows(conn, table, rows, source, *, day=None):
     logger.info("%s: deleted %s, inserted %s (%s, scope=%s)",
                 table, deleted, written, source, scope)           
 
-def merge_rows(conn, table, rows, source):
+
+def merge_rows(
+    conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]], source: str
+) -> None:
     """Fragment append: INSERT with conflict handling, no DELETE.
 
     For a source that holds part of a key range rather than all of it. The
@@ -316,13 +334,13 @@ def merge_rows(conn, table, rows, source):
                 table, written, len(payload), source)
 
 
-def load_demand(conn, path):
+def load_demand(conn: sqlite3.Connection, path: Path) -> None:
     rows, dropped = parse_monthly_demand(path)
     replace_rows(conn, "area_demand", rows, AUTHORITATIVE_SOURCE)
     logger.info("area_demand: dropped %s blank rows", dropped)
 
 
-def load_weather(conn, path):
+def load_weather(conn: sqlite3.Connection, path: Path) -> None:
     # Third write strategy in this module, deliberately: neither replace_rows
     # nor merge_rows. weather_hourly has no source column, because there is
     # one weather source and no provenance question -- so there is nothing for

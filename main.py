@@ -7,7 +7,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from hokkaido_grid.config import load_config
+from hokkaido_grid.config import Config, load_config
 from hokkaido_grid.errors import (
     ConfigError,
     SchemaChanged,
@@ -60,7 +60,7 @@ EXIT_REFUSED = 4      # init-db found objects already in the database and
 log = logging.getLogger("main")
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hokkaido-grid",
         description="Capture and load Hokkaido grid demand data.",
@@ -94,7 +94,7 @@ def build_parser():
     return parser
 
 
-def cmd_daily(args, cfg):
+def cmd_daily(args: argparse.Namespace, cfg: Config) -> int:
     # Yesterday, not today: today's file exists but is still being written to,
     # so today can only ever yield a partial day. How long yesterday stays
     # reachable is hepco_daily.RETENTION_DAYS and is stated there, with the
@@ -151,7 +151,7 @@ def cmd_daily(args, cfg):
 SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "schema.sql"
 
 
-def cmd_init_db(args, cfg):
+def cmd_init_db(args: argparse.Namespace, cfg: Config) -> int:
     # The file existing proves nothing: sqlite3.connect() creates one on the
     # spot, so this very line makes a file appear at a path that had none.
     # Testing for the file would therefore refuse on a database it had just
@@ -196,7 +196,8 @@ def cmd_init_db(args, cfg):
     print(f"{cfg.db_path}: schema applied from {SCHEMA_PATH}")
     return EXIT_OK
 
-def cmd_monthly(args, cfg):
+
+def cmd_monthly(args: argparse.Namespace, cfg: Config) -> int:
     log.info("monthly: loading %s", args.path)
     conn = sqlite3.connect(cfg.db_path)
     try:
@@ -206,7 +207,7 @@ def cmd_monthly(args, cfg):
     return EXIT_OK
 
 
-def cmd_weather(args, cfg):
+def cmd_weather(args: argparse.Namespace, cfg: Config) -> int:
     log.info("weather: loading %s", args.path)
     conn = sqlite3.connect(cfg.db_path)
     try:
@@ -216,7 +217,7 @@ def cmd_weather(args, cfg):
     return EXIT_OK
 
 
-def cmd_gaps(args, cfg):
+def cmd_gaps(args: argparse.Namespace, cfg: Config) -> int:
     log.info("gaps: %s %s..%s", args.source, args.start, args.end)
     conn = sqlite3.connect(cfg.db_path)
     try:
@@ -249,7 +250,7 @@ COMMANDS = {
 }
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:

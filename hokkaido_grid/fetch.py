@@ -38,7 +38,7 @@ RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 log = logging.getLogger(__name__)
 
 
-def get_text(url, encoding=None):
+def get_text(url: str, encoding: str | None = None) -> str:
     """GET `url` with retries; return the body as text, or raise.
 
     `encoding` is decoded strictly from the raw bytes when given. The default

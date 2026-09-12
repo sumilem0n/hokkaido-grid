@@ -18,6 +18,9 @@ from pathlib import Path
 
 import pytest
 
+from hokkaido_grid.config import Config
+from main import build_parser, cmd_init_db
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 
@@ -112,3 +115,35 @@ def dataset(schema):
     )
     schema.commit()
     return schema
+
+@pytest.fixture
+def initialised_db(tmp_path):
+    """A path to a database file that `init-db` built, by running `init-db`.
+
+    Not part of the chain above, and cannot be. Those three share one
+    in-memory connection; cmd_init_db opens its own connection from
+    cfg.db_path, so an in-memory database handed to it would be ignored --
+    it would build a second, private one and the test would be left holding
+    the empty original.
+
+    So this one deals in a file. tmp_path is fresh per test, which keeps the
+    per-test isolation the chain gets from :memory:.
+
+    The command is called, not imitated. Applying SCHEMA_PATH here by hand
+    would be a second implementation of init-db that agrees with the real one
+    only until someone changes it -- and SCHEMA_PATH is the schema fixture's,
+    not this one's. cmd_init_db reads its own.
+
+    Returns a path, not a connection: there is no open handle to close, so a
+    test opens what it needs and owns the lifetime of it.
+    """
+    # No file is made here -- sqlite3.connect() inside cmd_init_db creates it,
+    # which is the case init-db's "is anything already in there" check exists
+    # to survive.
+    db_path = tmp_path / "initialised.db"
+
+    cfg = Config({"paths": {"db": str(db_path)}}, source="initialised_db fixture")
+    args = build_parser().parse_args(["init-db"])
+    cmd_init_db(args, cfg)
+
+    return db_path

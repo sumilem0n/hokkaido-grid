@@ -18,3 +18,5 @@ data/*.json
 # a restored last_success would be a false claim that the pipeline ran
 logs/
 state/
+__pycache__/
+.pytest_cache/

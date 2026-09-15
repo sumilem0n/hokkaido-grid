@@ -201,6 +201,45 @@ Corrected 2026-08-23.
 that constant, the module docstring, and cmd_daily's comment in main.py. Same
 one-fact-one-home question as FIELDS.md vs data/README.md.
 
+**Corrected 2026-09-14.** Five homes, not three, and the list above is wrong in
+both directions.
+
+The rule counted by: a home is a place that *asserts* the fact — the number
+itself, or the boundary arithmetic that fixes it. A place that says where the
+fact lives without restating it is a pointer, and a pointer cannot go stale on
+its own. Count assertions; leave pointers alone.
+
+Wrong upward, by one. `cmd_daily`'s comment (main.py:100) is a pointer. It says
+the window and the measurements behind it live in `hepco_daily.RETENTION_DAYS`,
+and it records that restating the number there was a copy which had already gone
+stale once. It asserts no value. main.py's second mention (line 125) is a
+pointer too: `cmd_gaps` reading the constant instead of writing the number down
+again is the exemplar there for why the database path has one home. errors.py is
+the same move — row 2 names no number on purpose, and says why. All three are
+deliberate, and none of them is a home.
+
+Wrong downward, by three. The list misses `gaps.py:188–192`, which states the
+boundary; `FIELDS.md:530`, which states the value a second time; and this entry
+itself, which asserts `RETENTION_DAYS = 2` in the act of listing where
+`RETENTION_DAYS = 2` lives, and then leaves itself out of its own count. Three
+named, one struck, three added: five.
+
+The five: `hepco_daily.py:59` (the constant), `hepco_daily.py:27` (the module
+docstring), `gaps.py:188–192`, `FIELDS.md:530`, `FIELDS.md:200`.
+
+The shape of that is worth a line, because it is not the six-homes lesson. Three
+of the four files that mention retention — errors.py, and main.py twice — are
+doing the right thing and saying why, at length. The duplication that survives
+is inside the two files that document rather than run: FIELDS.md states the
+value twice, and gaps.py's docstring restates a boundary that hepco_daily.py
+already owns. The code applied the rule; the prose about the code did not.
+
+One consequence with teeth. `gaps.py:188–192` states the operator —
+`age < tail_days`, not `<=`, a tail of N stopping at age N−1. If
+`RETENTION_DAYS` ever moves, or that `>=`/`<` pair is ever rewritten, that
+docstring is where the stale claim lands. It is the docstring for `classify`:
+the function whose output tells you whether data is still recoverable.
+
 ### The daily file is 47 rows, not 48
 
 `20260802_hokkaido_jisseki.csv`:
@@ -635,6 +674,21 @@ minutes, next week; today is the PK migration and the loaders.
   The 13:00 slot lands inside the window and is the load-bearing one. **A crontab line that has
   never once fired reads as cover and is not.** Move `0 8` past the boot window or delete it;
   decide with `gaps`.
+
+  *Corrected 2026-09-14.* The boot times stand. The conclusion drawn from them does not: `0 8`
+  has fired. `cron.log` carries a line at `08:00:01` on 12 September. Two observed misses on
+  two consecutive days were read as a permanent property of the machine, and the bolded verdict
+  above is the shape that reading took.
+
+  What the correction exposes is the `@reboot` line, added as cover when `0 8` looked dead and
+  left in place after it wasn't. `@reboot` and a firing `0 8` are additive, not alternatives:
+  the 12th ran four times against two scheduled. That is harmless while the daily path merges —
+  a re-fetch of the same finished file writes the same rows over the same key and nothing moves.
+  It is a defect the moment anything in the chain stops being idempotent, and nothing in the
+  schedule records that it depends on that. The open question is no longer whether to move or
+  delete `0 8`; it is whether `@reboot` still has a job now that the slot it was covering for
+  fires.
+
 - Acknowledgement must refuse a gap that is still recoverable. Acking a fixable day converts it to a
   permanent one by hand.
 - ~~**Mail is assumed and does not exist.**~~ **RESOLVED 23 Aug — see the notification-channel
@@ -750,7 +804,10 @@ still lands inside the one usable day.
   it does not prevent it. Daily uptime is the assumption the whole daily track
   rests on, stated here so it reads as a known exposure rather than an oversight.
   *Reinforced 2026-08-25: the machine has booted after 08:00 on two consecutive
-  days, which is why `0 8` never fired.*
+  days.* ~~*which is why `0 8` never fired.*~~ *Withdrawn 2026-09-14 — `0 8`
+  does fire. The boot times stand; the inference does not. Correction under
+  "Open" above, and not restated here.*
+ 
 
 ## Decision — A2, retain raw bytes, 21 Aug 2026
 

@@ -90,17 +90,10 @@ began in August and April is the only month loaded from the archive. None of the
 are available from the monthly archive, which is not yet acquired.
 
 **23:30 is missing from every daily-source day and present in every monthly one.**
-As parsed, the daily feed yields 48 rows, and the last of them reaches the
-loader with its date, period index and both boundary times populated and its
-three measurement columns empty; the fetcher drops it rather than storing an
-empty period, which is why 47 rows per day are stored and why `gaps` excludes
-the slot instead of reporting it as missing. The cause is unresolved. Either
-HEPCO finalises the file before its last period closes, or the loader is
-discarding a row that arrives with a value. The measurement that separates them:
-open a retained capture in `data/raw/` for a day whose 23:30 is absent from the
-database and read 時間コマ 48. A value there is the loader; an empty row is the
-source. Raw bytes have been retained since 24 August, so the test is runnable
-against any day captured since, and has not been run.
+HEPCO writes all 48 rows and fills the ones closed at publication, and 23:30
+cannot close before midnight, so that row is published empty at every age the
+file is reachable — measured on `20260802_hokkaido_jisseki.csv`, still empty
+when re-fetched on 3 August, and recorded in `FIELDS.md`.
 
 ## How it runs
 
@@ -136,7 +129,8 @@ lives. The rule for reads is view-first, with `gaps` the one documented
 exemption: decided 27 August and cited in `hokkaido_grid/gaps.py`, `FIELDS.md`
 and `sql/queries/forward_step.sql`, on the grounds that the view hides source
 identity and a gap report needs it. The queries under `queries/` predate the view
-and have never been audited against the rule. `weather_hourly` is hourly and
+and have never been audited against the rule; `sql/queries/` holds the ones
+written after it, each against the view. `weather_hourly` is hourly and
 keyed on `datetime_jst` alone.
 
 Column meanings, units, source layouts and the reasoning behind each decision live

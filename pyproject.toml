@@ -1,7 +1,7 @@
 [project]
 name = "hokkaido-grid"
 version = "0.1.0"
-description = "Add your description here"
+description = "Loads HEPCO Hokkaido area demand and hourly weather into SQLite, with gap checks and SQL analysis queries."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,3 +17,13 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["hokkaido_grid*"]

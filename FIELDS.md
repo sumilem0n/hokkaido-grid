@@ -24,52 +24,211 @@
   skipped local hour → no collision). In a DST zone you would key on UTC instead.
 
 ## Source A — HEPCO area supply-demand actuals
+
+*Rewritten 18 Sep 2026. Column numbers in this section count from 1. The previous version counted
+from 0; every column reference elsewhere in this file was renumbered in the same pass.*
+
 - File: data/hepco_demand_2026-04.csv  (monthly, one file per month)
 - Publisher: 北海道電力ネットワーク (Hokkaido Electric Power Network)
-- Encoding: CP932 (Shift-JIS superset). NOT UTF-8 — loader must open(..., encoding="cp932").
-- Line endings: CRLF (Windows-authored).
 - Unit: MW (the banner row reads 単位[MW平均]). NO ×10 — this file is already MW, not 万kW.
   **Scope, added 25 Aug: this sentence is about the MONTHLY file only.** The table it loads into also
   holds daily rows, and the daily jisseki feed is kWh (÷500). A reader taking this line as a fact
   about `area_demand` rather than about Source A gets the wrong unit for half the table.
-- Structure: line 1 = unit/group banner (SKIP 1); line 2 = header; lines 3..1442 = data
-  (30 days × 48 half-hours = 1440 rows); then ~48 trailing all-comma blank rows (DROP — empty DATE).
 - Grain: 30-min, JST.
-- Caveats: values are retroactively corrected; rounding can make components not sum exactly; solar
-  self-consumption is excluded (shows up as reduced demand). 合計 = sum of all supply components and
-  equals エリア需要 in a balanced grid.
+- Caveats: values are retroactively corrected; solar self-consumption is excluded (shows up as
+  reduced demand); component rounding is claimed but NOT observed: 1440 of 1440 April rows sum exactly
+  (see "Identity checked on every row"). The claim predates this entry and its source is
+  unrecorded — it is not attributed to HEPCO documentation anywhere in this file. Either
+  find the source or mark it unsourced; an unsourced assertion in a file whose whole
+  discipline is sourcing assertions is the thing it exists to prevent.
 
-Column inventory (index -> field). Kept columns marked [x]; the rest exist and can be added later.
+  **Re-ask trigger.** If a backfilled month ever returns `mismatched > 0`, read `maxdiff`:
+  integer-sized (1, 2) means source rounding and the caveat was right, and the tolerance is
+  ±1–2 MW, not 0.05. Fractional (0.4, 1.7) means it is not the source — the file publishes
+  no decimals — and the defect is ours.
+  
 
-**This inventory is the 22-COLUMN LAYOUT ONLY (202504–202607).** Idx 8 is 火力出力制御量, which is
-the 22-column form. In the 20-column layout (202404–202503) position 8 is 水力 and everything below
-shifts, so idx 13–16 are UNCONFIRMED there and cannot be checked until the backfill pulls a
-202404–202503 file. Rung 7 reads exactly those columns. Resolve by header name; raise on absence.
+### Scope: one monthly file
 
-| idx | raw (JP)              | meaning              | unit | notes                                   |
+Everything in this section was measured on one file, April 2026. The monthly archive has not been
+acquired: no other month has been fetched, read or loaded. Every count below is an April count, and
+April is one shoulder-season month. Acquiring the archive is a backfill item. Until it is done,
+nothing here is known to hold for any other month.
+
+### Source facts
+
+- Encoding: CP932 (Shift-JIS superset). NOT UTF-8 — loader must open(..., encoding="cp932").
+- Line endings: CRLF. The `\r` stays attached to the last field of every line unless the reader
+  removes line endings before splitting on commas. In awk, `$22` (合計) is `3453\r`, not `3453`.
+  Printed, the `\r` sends the cursor back to the start of the line and the next field overprints the
+  timestamp. `$22+0` converts to a number and drops it. A string comparison on the last field fails.
+- Line 1: unit/group banner. Skip.
+- Line 2: header. Resolve columns from this line by name.
+- Line 3: first data row. Lines 3..1442 are data (30 days × 48 half-hours = 1440 rows), then ~48
+  trailing all-comma blank rows (DROP — empty DATE).
+
+### Column map — 22-column layout
+
+Observed in one file, 2026-04. Header read 18 Sep:
+
+    sed -n '2p' data/hepco_demand_2026-04.csv | iconv -f CP932 -t UTF-8 | tr ',' '\n' | nl
+
+The date range 202504–202607 for this layout is carried from the previous version of this entry.
+Only 2026-04 has been read.
+
+Column numbers count from 1, the way awk (`$1`) and `nl` count. Python counts list positions from
+0, so subtract 1 to get the Python index. 合計 is column 22 here and index 21 in Python.
+
+Kept columns marked [x]; the rest exist and can be added later.
+
+| col | raw (JP)              | meaning              | unit | notes                                   |
 |-----|----------------------|----------------------|------|-----------------------------------------|
-| 0   | DATE                 | date                 | -    | -> datetime_jst (with TIME)             |
-| 1   | TIME                 | half-hour            | -    | -> datetime_jst                         |
-| 2   | エリア需要            | area demand          | MW   | [x] demand_mw                           |
-| 3   | 原子力                | nuclear              | MW   | supply                                  |
-| 4   | 火力(LNG)            | thermal LNG          | MW   | supply                                  |
-| 5   | 火力(石炭)           | thermal coal         | MW   | supply                                  |
-| 6   | 火力(石油)           | thermal oil          | MW   | supply                                  |
-| 7   | 火力(その他)         | thermal other        | MW   | supply                                  |
-| 8   | 火力出力制御量        | thermal curtailment  | MW   | 22-col layout only; 水力 in the 20-col  |
-| 9   | 水力                  | hydro                | MW   | supply                                  |
-| 10  | 地熱                  | geothermal           | MW   | supply                                  |
-| 11  | バイオマス            | biomass              | MW   | supply                                  |
-| 12  | バイオマス出力制御量   | biomass curtailment  | MW   |                                         |
-| 13  | 太陽光発電実績        | solar output         | MW   | [x] solar_mw — weather-sensitive        |
-| 14  | 太陽光出力制御量      | solar curtailment    | MW   |                                         |
-| 15  | 風力発電実績          | wind output          | MW   | [x] wind_mw — weather-sensitive         |
-| 16  | 風力出力制御量        | wind curtailment     | MW   |                                         |
-| 17  | 揚水                  | pumped storage       | MW   | can be NEGATIVE                         |
-| 18  | 蓄電池                | battery              | MW   | can be NEGATIVE                         |
-| 19  | 連系線                | interconnector       | MW   | can be NEGATIVE                         |
-| 20  | その他                | other                | MW   |                                         |
-| 21  | 合計                  | total supply         | MW   | [x] supply_total_mw; = demand balanced  |
+| 1   | DATE                 | date                 | -    | -> datetime_jst (with TIME)             |
+| 2   | TIME                 | half-hour            | -    | -> datetime_jst                         |
+| 3   | エリア需要            | area demand          | MW   | [x] demand_mw                           |
+| 4   | 原子力                | nuclear              | MW   | supply                                  |
+| 5   | 火力(LNG)            | thermal LNG          | MW   | supply                                  |
+| 6   | 火力(石炭)           | thermal coal         | MW   | supply                                  |
+| 7   | 火力(石油)           | thermal oil          | MW   | supply                                  |
+| 8   | 火力(その他)         | thermal other        | MW   | supply                                  |
+| 9   | 火力出力制御量        | thermal curtailment  | MW   | curtailment, NOT supply                 |
+| 10  | 水力                  | hydro                | MW   | supply                                  |
+| 11  | 地熱                  | geothermal           | MW   | supply                                  |
+| 12  | バイオマス            | biomass              | MW   | supply                                  |
+| 13  | バイオマス出力制御量   | biomass curtailment  | MW   | curtailment, NOT supply                 |
+| 14  | 太陽光発電実績        | solar output         | MW   | [x] solar_mw — weather-sensitive        |
+| 15  | 太陽光出力制御量      | solar curtailment    | MW   | curtailment, NOT supply                 |
+| 16  | 風力発電実績          | wind output          | MW   | [x] wind_mw — weather-sensitive         |
+| 17  | 風力出力制御量        | wind curtailment     | MW   | curtailment, NOT supply                 |
+| 18  | 揚水                  | pumped storage       | MW   | can be NEGATIVE                         |
+| 19  | 蓄電池                | battery              | MW   | can be NEGATIVE                         |
+| 20  | 連系線                | interconnector       | MW   | can be NEGATIVE                         |
+| 21  | その他                | other                | MW   |                                         |
+| 22  | 合計                  | total supply         | MW   | [x] supply_total_mw; carries the `\r`   |
+
+### 20-column layout — UNVERIFIED
+
+No 20-column file has been fetched. Nothing in this subsection is observed. It is an expectation,
+carried from the previous version of this entry.
+
+Expected: files for 202404–202503 have 20 columns. Expected: 火力出力制御量 is absent, so 水力 sits
+at column 9, where 火力出力制御量 sits in the 22-column layout, and every later column moves left.
+The other absent column is expected to be バイオマス出力制御量 (column 13). Stated in
+`study-plan.md`'s week 10 cell and in the 17 Sep handoff: *thermal and biomass start at 202504,
+so a summed total steps at 2025-04 for reporting reasons.* In a curtailment context those are
+columns 9 and 13, and 22 minus the two gives 20, which closes the arithmetic. Still an
+expectation, not an observation — no 20-column file has been read.
+
+What holds whichever layout arrives: resolve every column by header name and raise when a name is
+absent. Never by position. Rung 7 reads columns 14–17 of the 22-column layout, and their position
+in a 20-column file is exactly what is unconfirmed. Checkable only when the backfill pulls a
+202404–202503 file.
+
+### Supply-demand identity
+
+Sum columns 4 through 21. Subtract the four curtailment columns, 9, 13, 15 and 17. The result
+equals 合計 (column 22) and エリア需要 (column 3). Checked on two rows of the April file:
+
+| row                                         | sum 4–21 | curtailment | result | 合計 | エリア需要 |
+|---------------------------------------------|----------|-------------|--------|------|-----------|
+| a row with no curtailment                   | 2930     | 0           | 2930   | 2930 | 2930      |
+| first row with solar curtailment, 09:30 *   | 3532     | 79          | 3453   | 3453 | 3453      |
+
+    2930 − 0  = 2930
+    3532 − 79 = 3453
+
+\* 2026-04-01 09:30 — the first row in the file with non-zero solar curtailment. Re-read 18 Sep
+  with `print $1, $2`, which is clean because the `\r` rides on field 22 only.
+
+    awk -F, -v k=15 'NR>2 && $k+0!=0 {s=0; for(i=4;i<=21;i++) s+=$i; c=$9+$13+$15+$17;
+      printf "sum=%d curt=%d sum-curt=%d total=%d demand=%d\n", s, c, s-c, $22+0, $3; exit}' \
+      data/hepco_demand_2026-04.csv
+
+The curtailment columns sit among the supply columns and are not supply. They record output that
+was ordered off. 合計 is the sum of the supply columns only. A sum over columns 4–21 that does not
+subtract them overstates supply by the curtailed amount: 79 MW on the second row. On the first row
+the two readings agree because nothing was curtailed, so an uncurtailed row cannot tell a correct
+sum from a wrong one.
+
+### Identity checked on every row
+
+Two rows were checked by hand. The whole file was then checked in one pass, 18 Sep:
+
+| rows tested | mismatched | max difference |
+|-------------|------------|----------------|
+| 1440        | 0          | 0.000          |
+
+    awk -F, 'NR>2 && $1!="" {t++; s=0; for(i=4;i<=21;i++) s+=$i;
+      d=s-($9+$13+$15+$17)-($22+0); if(d<0) d=-d; if(d>0) n++; if(d>max) max=d}
+      END {printf "rows=%d mismatched=%d maxdiff=%.3f\n", t, n+0, max+0}' \
+      data/hepco_demand_2026-04.csv
+
+`$1!=""` excludes the ~48 trailing all-comma rows; 1440 is the full data set.
+
+**This is a check on the column map, not only on arithmetic.** If any of columns 9, 13, 15 or 17
+were misidentified, the subtraction would remove the wrong quantity and the difference would be
+non-zero on exactly the rows where that column is non-zero. 501 rows carry non-zero curtailment
+(231 biomass, 135 solar, 135 wind, thermal none — some rows carry more than one). All 501 pass.
+That is independent evidence for the map above, arrived at without re-reading the header.
+
+**Equality, not tolerance, and the scope of that.** Every value in columns 3–22 is an integer —
+`fields with a decimal point: 0` across all 1440 rows — so the parse-time check is exact integer
+arithmetic and `==` is correct. A later version of this check written against `area_demand` would
+be summing REAL columns and would need the tolerance treatment the `wind_solar_mw` CHECK already
+carries. Two different checks; only the file-level one gets `==`.
+
+### April 2026 curtailment counts
+
+Rows with a non-zero value, out of 1440:
+
+| col | column                | rows non-zero |
+|-----|-----------------------|---------------|
+| 9   | 火力出力制御量 thermal  | 0             |
+| 13  | バイオマス出力制御量    | 231           |
+| 15  | 太陽光出力制御量 solar  | 135           |
+| 17  | 風力出力制御量 wind     | 135           |
+
+Thermal curtailment is zero in every April row.
+
+Solar and wind both have 135 rows, and they are not the same 135:
+
+| solar and wind | solar only | wind only |
+|----------------|------------|-----------|
+| 129            | 6          | 6         |
+
+The twelve solo timestamps (curtailment in MW):
+
+| date       | time  | curtailed | MW |
+|------------|-------|-----------|----|
+| 2026/04/03 | 13:30 | solar     | 91 |
+| 2026/04/03 | 14:00 | solar     | 86 |
+| 2026/04/05 | 09:30 | solar     | 46 |
+| 2026/04/05 | 14:00 | solar     | 34 |
+| 2026/04/05 | 14:30 | solar     | 32 |
+| 2026/04/05 | 15:00 | solar     | 30 |
+| 2026/04/12 | 16:00 | wind      | 85 |
+| 2026/04/12 | 16:30 | wind      | 83 |
+| 2026/04/12 | 17:00 | wind      | 82 |
+| 2026/04/18 | 10:30 | wind      | 41 |
+| 2026/04/18 | 11:00 | wind      | 38 |
+| 2026/04/18 | 11:30 | wind      | 38 |
+
+### Solar and wind curtailment are scheduled independently
+
+Solar and wind curtailment are independently scheduled. Evidence, 2026/04/12: the solar order ends
+at 15:30 with solar still generating 405 MW in the next half-hour; the wind order continues to 17:00.
+
+| time  | solar output | solar curtailed | wind output | wind curtailed |
+|-------|--------------|-----------------|-------------|----------------|
+| 15:00 | 561          | 100             | 655         | 121            |
+| 15:30 | 518          | 73              | 591         | 135            |
+| 16:00 | 405          | 0               | 589         | 85             |
+| 16:30 | 239          | 0               | 635         | 83             |
+| 17:00 | 87           | 0               | 655         | 82             |
+
+At 16:00 solar is producing 405 MW with nothing curtailed, so the solar order did not end for lack
+of output. The three wind rows after it are three of the six wind-only timestamps above. Neither
+curtailment column can be inferred from the other.
 
 ## Source B — Open-Meteo Historical (ERA5)
 - File: data/weather_sapporo_2026-04.json
@@ -219,13 +378,16 @@ the same move — row 2 names no number on purpose, and says why. All three are
 deliberate, and none of them is a home.
 
 Wrong downward, by three. The list misses `gaps.py:188–192`, which states the
-boundary; `FIELDS.md:530`, which states the value a second time; and this entry
+boundary; `FIELDS.md:690`, which states the value a second time; and this entry
 itself, which asserts `RETENTION_DAYS = 2` in the act of listing where
 `RETENTION_DAYS = 2` lives, and then leaves itself out of its own count. Three
 named, one struck, three added: five.
 
 The five: `hepco_daily.py:59` (the constant), `hepco_daily.py:27` (the module
-docstring), `gaps.py:188–192`, `FIELDS.md:530`, `FIELDS.md:200`.
+docstring), `gaps.py:188–192`, `FIELDS.md:690`, `FIELDS.md:318`.
+
+*Line numbers updated 18 Sep 2026, after Source A was rewritten above them. `530` had already
+drifted before that: the line it named had moved to 569.*
 
 The shape of that is worth a line, because it is not the six-homes lesson. Three
 of the four files that mention retention — errors.py, and main.py twice — are
@@ -367,7 +529,7 @@ Seven fields in the header. Four are mapped:
 | `エリア風力・太陽光発電量(kWh)` | `wind_solar_mw` | ÷ 500, added 22 Aug |
 
 **`エリア総発電量(kWh)` is deliberately NOT mapped.** It is total area *generation*.
-`area_demand.supply_total_mw` is the monthly file's 合計 (col 21), a different quantity.
+`area_demand.supply_total_mw` is the monthly file's 合計 (column 22, counting from 1), a different quantity.
 Mapping one into the other would make a column mean two things depending on which loader
 wrote the row — the failure the wind/solar fork was decided to avoid. Revisit only with a
 decision about what the column should mean, not by filling it because it is empty.
@@ -419,7 +581,7 @@ able to read a rejection here as if it applied to the grain.
 
 Three columns: `wind_mw`, `solar_mw`, `wind_solar_mw`.
 
-- Monthly rows carry all three. `wind_mw` and `solar_mw` come from cols 15 and 13; the
+- Monthly rows carry all three. `wind_mw` and `solar_mw` come from columns 16 and 14 (counting from 1); the
   loader writes their sum to `wind_solar_mw`.
 - Daily rows carry `wind_solar_mw` only, from エリア風力・太陽光発電量 (kWh ÷ 500).
   `wind_mw` and `solar_mw` are NULL on every daily row, permanently. That NULL means
@@ -473,7 +635,7 @@ be present. There is deliberately no `IS NULL` escape. SQLite treats a CHECK eva
 satisfied, so escapes would let a monthly row carry `wind_solar_mw` with `wind_mw` missing and pass
 — a derived total with no parts, which is column option 1's failure mode reappearing one row at a
 time and passing the constraint that exists to catch it. Requiring all three means a monthly row
-with a blank in col 13 or 15 aborts the insert instead of loading half-formed. If HEPCO ever
+with a blank in column 14 or 16 aborts the insert instead of loading half-formed. If HEPCO ever
 publishes such a blank, that abort is how we find out, in the same spirit as `ROWS_PER_DAY = 47`
 being asserted exactly rather than as a floor.
 
@@ -862,7 +1024,7 @@ bytes the 24th would have been a day that failed for an unexamined reason.
 | Unrecoverable | Older than the tail, never fetched | Permanent fact. **0** |
 | Early publication | Complete file, legitimately short — periods not closed at publication | **0**, not an error |
 
-**Monthly is not a gap source** — see the exclusions at ~line 505, decided
+**Monthly is not a gap source** — see the exclusions at ~line 665, decided
 25 Aug. The `hepco_monthly_areajukyu` entry in `EXCLUDED_SLOTS` exists so
 `slots_for` is total rather than raising on a source that legitimately
 exists; it is not an invitation to run `gaps` against the archive.

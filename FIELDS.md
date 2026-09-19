@@ -106,6 +106,8 @@ Kept columns marked [x]; the rest exist and can be added later.
 | 21  | その他                | other                | MW   |                                         |
 | 22  | 合計                  | total supply         | MW   | [x] supply_total_mw; carries the `\r`   |
 
+The monthly file records curtailment as volume only (MW per half-hour, per technology). It carries no reason code: supply-demand balance, grid congestion and any other cause are indistinguishable in this file. Checked 19 Sep against the 22-column header (1-indexed fields 1–22).
+
 ### 20-column layout — UNVERIFIED
 
 No 20-column file has been fetched. Nothing in this subsection is observed. It is an expectation,

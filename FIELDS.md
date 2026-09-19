@@ -380,16 +380,16 @@ the same move — row 2 names no number on purpose, and says why. All three are
 deliberate, and none of them is a home.
 
 Wrong downward, by three. The list misses `gaps.py:188–192`, which states the
-boundary; `FIELDS.md:690`, which states the value a second time; and this entry
+boundary; FIELDS.md under "The window is one night, not two", which states the value a second time; and this entry
 itself, which asserts `RETENTION_DAYS = 2` in the act of listing where
 `RETENTION_DAYS = 2` lives, and then leaves itself out of its own count. Three
 named, one struck, three added: five.
 
 The five: `hepco_daily.py:59` (the constant), `hepco_daily.py:27` (the module
-docstring), `gaps.py:188–192`, `FIELDS.md:690`, `FIELDS.md:318`.
+docstring), `gaps.py:188–192`, FIELDS.md "The window is one night, not two", FIELDS.md "Retention: 2 days". 
 
 *Line numbers updated 18 Sep 2026, after Source A was rewritten above them. `530` had already
-drifted before that: the line it named had moved to 569.*
+drifted before that: the line it named had moved to 569.* Replaced with section names 19 Sep 2026: both FIELDS.md numbers had drifted again (690 to 733; 318's target ambiguous between 333 and 361). 
 
 The shape of that is worth a line, because it is not the six-homes lesson. Three
 of the four files that mention retention — errors.py, and main.py twice — are
@@ -1026,8 +1026,7 @@ bytes the 24th would have been a day that failed for an unexamined reason.
 | Unrecoverable | Older than the tail, never fetched | Permanent fact. **0** |
 | Early publication | Complete file, legitimately short — periods not closed at publication | **0**, not an error |
 
-**Monthly is not a gap source** — see the exclusions at ~line 665, decided
-25 Aug. The `hepco_monthly_areajukyu` entry in `EXCLUDED_SLOTS` exists so
+**Monthly is not a gap source** — see the exclusions under "Decision — gap alerting and acknowledgement", Scope of the detector, decided 25 Aug. The `hepco_monthly_areajukyu` entry in `EXCLUDED_SLOTS` exists so
 `slots_for` is total rather than raising on a source that legitimately
 exists; it is not an invitation to run `gaps` against the archive.
 

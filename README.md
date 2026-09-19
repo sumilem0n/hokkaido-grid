@@ -33,9 +33,25 @@ what lets the record survive the retention window.
 
 ## What would sit next to it
 
-A curtailment series (the monthly file is the sole source for it), the 28-month
-archive backfill that the curtailment work depends on, and Postgres plus Azure
-Monitor when this moves off a laptop.
+The curtailment series beyond April 2026 (the monthly file is the sole source for it), the 28-month archive backfill that extending it depends on, and Postgres plus Azure Monitor when this moves off a laptop.
+
+## Curtailment, April 2026                                     
+
+Curtailment is generation a grid operator orders off: output a solar or wind plant could have
+produced but was told not to. In April 2026 solar or wind was curtailed in 141 of 1,440
+half-hours on the Hokkaido grid. In Germany, the Bundesnetzagentur reports 9,379 GWh of renewable
+generation curtailed for grid congestion in 2025, 3.5% of all renewable generation
+([SMARD, 30 March 2026](https://www.smard.de/page/en/topic-article/5892/220534/volume-of-measures-stable-in-the-year-as-a-whole)).
+The Hokkaido file records the volume curtailed but not the reason, so the two figures are not the
+same measurement. The monthly half-hourly record from Hokkaido Electric Power Network (downloaded
+25 July 2026) shows solar and wind curtailed on separate schedules, not as one block. On 12 April
+the solar order ended after 15:30 while solar was still generating 405 MW at 16:00, and the wind
+order ran on to 17:00. Across the month, 12 half-hours carried curtailment of solar or wind but
+not both, 6 solar and 6 wind, and all 12 fell in daylight. The two were curtailed in the same
+number of periods, 135 each, but not at the same scale: solar lost 15,895.5 MWh and wind
+2,692.0 MWh, about a sixth as much. Wind's curtailment was 0.97% of its actual output for the
+month. This is one month from one utility. A backfill across the monthly archive would test
+whether both findings hold outside April.
 
 ## Provenance
 
@@ -98,12 +114,8 @@ when re-fetched on 3 August, and recorded in `FIELDS.md`.
 ## How it runs
 
 `bin/fetch_daily.sh` wraps `main.py daily <yesterday>` and runs from cron at
-`0 8` and `0 13`, plus an `@reboot` line added as interim cover. Both scheduled
-slots fire. `@reboot` fires in addition to them rather than in place of them, so
-a day with reboots in it runs the job more often than the crontab schedules: four
-runs on 2026-09-12 against the two scheduled. Re-runs are harmless — the daily
-path merges rather than replaces, so a second fetch of the same day updates rows
-in place and changes nothing.
+`0 8` and `0 13`, plus an `@reboot` line added as interim cover. 
+Each slot fires only if the machine is up at that time. From 14 to 19 September the machine booted after 08:00 every day, so every morning capture came from `@reboot`, and `0 13` did not run on the 17th or 18th. `@reboot` is in practice the primary capture path. Re-runs are harmless — the daily path merges rather than replaces, so a second fetch of the same day updates rows in place and changes nothing. On 2026-09-12 the machine was up at 08:00 and the job ran four times against the two scheduled.
 
 - `state/last_success` — one ISO-8601 line, truncated on each write, written only
   on exit 0. The heartbeat.
@@ -160,13 +172,7 @@ not 48. It does not show that the numbers in the database are right.
   compared against a monthly MW figure for the same period. That the daily column
   is kWh rests on the header assertion in the loader, not on a cross-check. The
   backfill is what would first test all three.
-- **Curtailment is unbuilt, and the monthly file is its only source.** The archive
-  has two layouts: 20 columns for 202404–202503 and 22 for 202504 onward, both
-  breaking on a 年度 boundary. Solar and wind curtailment are comparable across all
-  28 months; thermal and biomass exist from 202504 only, so a summed total would
-  step at 2025-04 for reporting reasons rather than grid reasons. Columns must be
-  resolved by name — position 8 is 水力 in one layout and 火力出力制御量 in the
-  other.
+- **Curtailment covers April 2026 only**, and the monthly file is its only source. The archive has two layouts: 20 columns for 202404–202503 and 22 for 202504 onward, both breaking on a 年度 boundary. The 22-column layout adds 火力出力制御量 and バイオマス出力制御量 (observed by header name, 8 August); solar and wind curtailment are expected in both layouts, which is unverified until a 20-column file is on disk. A thermal or biomass total would step at 2025-04 for reporting reasons rather than grid reasons. Columns must be resolved by name: position 9 (counting from 1) is 火力出力制御量 in the 22-column layout and a different column in the 20-column one. 
 - **`pyproject.toml` has no packages stanza.** No build backend is declared and no
   package discovery is configured, so the project cannot be installed. Tests pass
   only because `[tool.pytest.ini_options]` sets `pythonpath = ["."]`, and anything

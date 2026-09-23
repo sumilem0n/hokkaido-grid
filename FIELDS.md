@@ -1089,3 +1089,16 @@ time that question is actually asked.
 
 `gaps` runs AFTER the fetch in the cron wrapper. Before it, it reports
 yesterday as recoverable — an alert it created by running early.
+
+### Measured — 23 Sep 2026, after the 20–22 Sep trip
+
+gaps hepco_daily_jisseki 2026-08-06 2026-09-22 → 6 gaps, 799 periods (17 days), 0 actionable, exit 0. Range 48 days × 47 = 2256 expected; 31 days loaded = 1457; 2256 − 1457 = 799.
+
+The trip lost no days. 19–22 Sep each have a raw file and 47 rows in area_demand, listed by day.
+
+Causes, as recorded in the Verification Log:
+
+- 7–8, 10–14, 16–20 Aug: before rung 4 (cron, 23 Aug); not fetched.
+- 24 Aug: three raw files on disk, no rows; rc=75 on 25 Aug. Fetched, never loaded.
+- 27–29 Aug: machine off; no raw file and no failures.log line.
+- 6 Sep: rc=75 twice on 7 Sep; retryable, never retried.

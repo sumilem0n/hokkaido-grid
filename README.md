@@ -111,6 +111,8 @@ cannot close before midnight, so that row is published empty at every age the
 file is reachable — measured on `20260802_hokkaido_jisseki.csv`, still empty
 when re-fetched on 3 August, and recorded in `FIELDS.md`.
 
+As of 23 September 2026 the daily track is missing 17 days between 6 August and 22 September (799 half-hour periods): twelve early-August days from before scheduling was automated, three days the machine was off, and two days whose run failed with a retryable error and was never retried. The daily feed keeps about two days, so none of these can be re-fetched from it; the monthly archive is the recovery route.
+
 ## How it runs
 
 `bin/fetch_daily.sh` wraps `main.py daily <yesterday>` and runs from cron at

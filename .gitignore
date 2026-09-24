@@ -4,7 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 sql/*.db
-python/*_over_500.csv
+sql/*.db.bak
 python/*_over_500.csv
 
 # raw source data (regenerable; not redistributed)
@@ -18,5 +18,3 @@ data/*.json
 # a restored last_success would be a false claim that the pipeline ran
 logs/
 state/
-__pycache__/
-.pytest_cache/

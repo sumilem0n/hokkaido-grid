@@ -11,16 +11,18 @@ from hokkaido_grid.config import Config, load_config
 from hokkaido_grid.errors import (
     ConfigError,
     SchemaChanged,
+    ShortFile,
     SourceTransientError,
     SourceUnavailable,
 )
+
 from hokkaido_grid.gaps import find_gaps, format_report, has_actionable
 from hokkaido_grid.load import load_demand, load_weather, merge_rows
 from hokkaido_grid.sources import hepco_daily
 
 SOURCE_NAME = "hepco_daily_jisseki"
 
-# The four rows of the table in errors.py, plus config and one finding code.
+# The five rows of the table in errors.py, plus config and one finding code.
 # cron reads exit codes, not log levels, and the week 6 backfill driver will
 # read the same set:
 # 75 -> sleep and retry, 69 -> next day, 65 and 70 -> stop.
@@ -31,9 +33,9 @@ SOURCE_NAME = "hepco_daily_jisseki"
 # have reached the driver wearing row 2's code and been walked past. The driver
 # should treat an unrecognised code as halt for the same reason.
 EXIT_OK = 0
-EXIT_HALT = 65       # row 3: EX_DATAERR
+EXIT_HALT = 65       # rows 3 and 4: EX_DATAERR
 EXIT_SKIP = 69       # row 2: EX_UNAVAILABLE
-EXIT_BUG = 70        # row 4: EX_SOFTWARE, the residual
+EXIT_BUG = 70        # row 5: EX_SOFTWARE, the residual
 EXIT_TRANSIENT = 75  # row 1: EX_TEMPFAIL
 EXIT_CONFIG = 78     # EX_CONFIG, kept distinct from argparse's own 2 for usage
 
@@ -52,10 +54,10 @@ EXIT_REFUSED = 4      # init-db found objects already in the database and
                       # declined. Like 3, a finding rather than a failure --
                       # nothing raised, nothing broke, the command simply will
                       # not act on a database it did not create. Its own code
-                      # rather than 65, because 65 is row 3's and means a source
-                      # file changed shape underneath us. And unlike 3, the
-                      # unrecognised-code-is-halt rule costs nothing here: halt
-                      # is what a driver meeting this should do anyway.
+                      # rather than 65, because 65 is rows 3 and 4's and means a
+                      # source file changed shape underneath us or came up short.
+                      # And unlike 3, the unrecognised-code-is-halt rule costs 
+                      #nothing here: halt is what a driver meeting this should do anyway.
 
 log = logging.getLogger("main")
 
@@ -268,9 +270,9 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # One handler for all three commands, one block per row of the table in
-    # errors.py. The order of the first three is cosmetic, because those types
+    # errors.py. The order of the first four is cosmetic, because those types
     # are siblings and none can shadow another -- if that ever stops being true,
-    # the fix is the hierarchy, not the ordering here. Row 4 must stay last,
+    # the fix is the hierarchy, not the ordering here. Row 5 must stay last,
     # and it is the one block whose position is load-bearing.
     try:
         return COMMANDS[args.command](args, cfg)
@@ -283,8 +285,11 @@ def main(argv: list[str] | None = None) -> int:
     except SchemaChanged:
         log.exception("schema changed: halting, every later file is suspect")
         return EXIT_HALT
+    except ShortFile:
+        log.exception("short file: halting, only this file is short, load a complete file by hand")
+        return EXIT_HALT
     except Exception:
-        # Row 4. Not defensive tidiness: without this the traceback goes to
+        # Row 5. Not defensive tidiness: without this the traceback goes to
         # stderr, which cron mails somewhere nobody reads, and the exit code is
         # 1. Here it lands in the log with everything else, and the driver gets
         # a code that means halt. Exception, not BaseException -- KeyboardInterrupt

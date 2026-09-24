@@ -13,11 +13,12 @@ import main
 from hokkaido_grid.errors import (
     ConfigError,
     SchemaChanged,
+    ShortFile,
     SourceTransientError,
     SourceUnavailable,
 )
 
-TABLE_TYPES = (SourceTransientError, SourceUnavailable, SchemaChanged)
+TABLE_TYPES = (SourceTransientError, SourceUnavailable, SchemaChanged, ShortFile)
 
 
 def test_skip_does_not_catch_halt():
@@ -46,7 +47,7 @@ def test_no_table_type_catches_another(a, b):
 
 
 def test_no_shared_base_below_exception():
-    """A shared base would make `except ThatBase` collapse all three rows."""
+    """A shared base would make `except ThatBase` collapse all four rows."""
     for cls in TABLE_TYPES + (ConfigError,):
         assert cls.__bases__ == (Exception,)
 

@@ -34,7 +34,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from hokkaido_grid.errors import SchemaChanged
+from hokkaido_grid.errors import SchemaChanged, ShortFile
 
 logger = logging.getLogger(__name__)
 
@@ -276,13 +276,11 @@ def replace_rows(
         # nothing to compare against on a first load, so the guard is blind
         # there. See test_first_load_is_unguarded.
         #
-        # ValueError is a placeholder. This belongs in errors.py as a fifth
-        # sibling; SchemaChanged was rejected because the file's shape is
-        # intact -- only its ending is missing, and "every later file is
-        # suspect" is false for a short month. Owed, week 9.
+        # ShortFile, row 4 in errors.py -- not SchemaChanged, because the
+        # file's shape is intact and only its ending is missing.
         
         if deleted and written < deleted:
-            raise ValueError(
+            raise ShortFile(
                 f"{table}: {source} {scope} shrank -- deleted {deleted}, "
                f"wrote {written}. Truncated file? Nothing was changed."
             )

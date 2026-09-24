@@ -22,10 +22,13 @@ failure that does not fit a row changes the table first and the code second.
   the file is not the file    SchemaChanged         halt the run     65
   we expect                                                          (EX_DATAERR)
 
+  the file is shorter than    ShortFile             halt the run     65
+  what it replaces                                                   (EX_DATAERR)
+
   anything else               (no type of ours)     halt the run     70
                                                                      (EX_SOFTWARE)
 
-The fourth row is residual and deliberate: a failure we never thought about has
+The fifth row is residual and deliberate: a failure we never thought about has
 to fail closed, not skip. Backoff and escalation live in the caller -- cron
 today, the week 6 backfill driver later. This module only names the cases.
 
@@ -48,7 +51,7 @@ unhandled exception, 2 for argparse's usage error -- and a driver that read 1 as
 "skip this day" would read every stray ValueError, sqlite3.OperationalError on a
 locked database, and plain bug as a day that was merely gone. That is the same
 argument that kept ConfigError off argparse's 2, applied to every row instead of
-one of them. Row 4 catches most of it; moving skip off 1 is what makes a 1 that
+one of them. Row 5 catches most of it; moving skip off 1 is what makes a 1 that
 still escapes mean something on its own.
 
 
@@ -72,9 +75,9 @@ is the more serious one. Flat, so the two cannot be caught together by accident.
 tests/test_errors.py asserts exactly that, because it is the one property a
 refactor can break without breaking anything that runs.
 
-No shared project base class either -- all four inherit Exception directly. A
-base would only earn its place if something wanted to catch all four at once,
-and main() wants the reverse: four different exit codes.
+No shared project base class either -- all five inherit Exception directly. A
+base would only earn its place if something wanted to catch all five at once,
+and main() wants the reverse: a separate except block for each.
 
 requests.exceptions is deep and multiply-inherited -- RequestException(IOError),
 ConnectTimeout(ConnectionError, Timeout), MissingSchema(RequestException,
@@ -136,6 +139,15 @@ class SchemaChanged(Exception):
     it. If this ever needs one, that is a signature change, not a default.
     """
 
+class ShortFile(Exception):
+    """Row 4. The file is shorter than what it replaces.
+
+    Halts the run, exit 65/EX_DATAERR.
+    Not SchemaChanged, because the file's shape is intact and only its ending
+    is missing. SchemaChanged halts on the grounds that every later file is
+    suspect, and that is false for a short file: the next one is as likely to
+    be complete as any other.
+    """
 
 class ConfigError(Exception):
     """config.toml is missing, unreadable, or holds a value that cannot be used.

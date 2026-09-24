@@ -22,6 +22,7 @@ import calendar
 import pytest
 
 from conftest import MONTHLY
+from hokkaido_grid.errors import ShortFile
 from hokkaido_grid.load import load_demand
 
 PERIODS_PER_DAY = 48                 # monthly cadence. The daily track is 47,
@@ -140,7 +141,7 @@ def test_a_truncated_file_over_a_populated_month_leaves_the_month_intact(schema,
     assert _rows_in(schema, APRIL) == APRIL_ROWS
 
     short = _month_csv(tmp_path, "april_short.csv", 2026, 4, limit=TRUNCATED_ROWS)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShortFile):
         load_demand(schema, short)
 
     assert _rows_in(schema, APRIL) == APRIL_ROWS
@@ -230,7 +231,7 @@ def test_the_rollback_does_not_reach_the_previous_month(schema, tmp_path):
     assert _rows_in(schema, MARCH) == MARCH_ROWS
 
     short = _month_csv(tmp_path, "april_short.csv", 2026, 4, limit=TRUNCATED_ROWS)
-    with pytest.raises(ValueError):
+    with pytest.raises(ShortFile):
         load_demand(schema, short)
 
     assert _rows_in(schema, MARCH) == MARCH_ROWS

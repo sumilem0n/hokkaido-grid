@@ -10,8 +10,8 @@ import sqlite3
 import pytest
 
 from hokkaido_grid.config import Config
-from main import EXIT_OK, EXIT_REFUSED, build_parser, cmd_init_db
-
+from hokkaido_grid.errors import EXIT_OK, EXIT_REFUSED
+from main import build_parser, cmd_init_db
 
 def run_init_db(db_path):
     """Call cmd_init_db the way main() does, pointed at db_path."""

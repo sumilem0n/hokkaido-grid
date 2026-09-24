@@ -9,55 +9,26 @@ from pathlib import Path
 
 from hokkaido_grid.config import Config, load_config
 from hokkaido_grid.errors import (
+    EXIT_BUG,
+    EXIT_CONFIG,
+    EXIT_GAPS_FOUND,
+    EXIT_HALT,
+    EXIT_OK,
+    EXIT_REFUSED,
+    EXIT_SKIP,
+    EXIT_TRANSIENT,
     ConfigError,
     SchemaChanged,
     ShortFile,
     SourceTransientError,
     SourceUnavailable,
 )
-
 from hokkaido_grid.gaps import find_gaps, format_report, has_actionable
 from hokkaido_grid.load import load_demand, load_weather, merge_rows
 from hokkaido_grid.sources import hepco_daily
 
 SOURCE_NAME = "hepco_daily_jisseki"
 
-# The five rows of the table in errors.py, plus config and one finding code.
-# cron reads exit codes, not log levels, and the week 6 backfill driver will
-# read the same set:
-# 75 -> sleep and retry, 69 -> next day, 65 and 70 -> stop.
-#
-# None of these is 0, 1 or 2. The interpreter owns those: 1 for an unhandled
-# exception, 2 for argparse's usage error. Skip used to be 1, which meant a
-# locked database, a stray ValueError out of _prepare, or any bug at all would
-# have reached the driver wearing row 2's code and been walked past. The driver
-# should treat an unrecognised code as halt for the same reason.
-EXIT_OK = 0
-EXIT_HALT = 65       # rows 3 and 4: EX_DATAERR
-EXIT_SKIP = 69       # row 2: EX_UNAVAILABLE
-EXIT_BUG = 70        # row 5: EX_SOFTWARE, the residual
-EXIT_TRANSIENT = 75  # row 1: EX_TEMPFAIL
-EXIT_CONFIG = 78     # EX_CONFIG, kept distinct from argparse's own 2 for usage
-
-EXIT_GAPS_FOUND = 3   # a finding, not a failure: gaps exist that a
-                      # fetch can still fill. Off 1 and 2 for the reason
-                      # above; outside the table like EXIT_CONFIG, since no
-                      # exception was raised and nothing went wrong.
-                      # Out of numeric order deliberately -- it does not
-                      # belong to the sysexits run above it. Note this is the
-                      # first code a driver can meet that means neither "done"
-                      # nor "stop", so the rule that an unrecognised code is
-                      # halt now has something real to recognise: a driver
-                      # that has not learned 3 halts on a successful report.
-
-EXIT_REFUSED = 4      # init-db found objects already in the database and
-                      # declined. Like 3, a finding rather than a failure --
-                      # nothing raised, nothing broke, the command simply will
-                      # not act on a database it did not create. Its own code
-                      # rather than 65, because 65 is rows 3 and 4's and means a
-                      # source file changed shape underneath us or came up short.
-                      # And unlike 3, the unrecognised-code-is-halt rule costs 
-                      #nothing here: halt is what a driver meeting this should do anyway.
 
 log = logging.getLogger("main")
 

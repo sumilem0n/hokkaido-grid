@@ -39,12 +39,13 @@ contract, so a stale figure in it is worse than the same figure stale anywhere
 else. Anything that needs the value reads it from the source module.
 
 ConfigError sits outside the table and exits 78/EX_CONFIG: it fails before any
-source is touched. main.EXIT_GAPS_FOUND is outside it too, and differently: 3
+source is touched. EXIT_GAPS_FOUND is outside it too, and differently: 3
 is not a failure at all but a finding -- the gaps report ran, and found
 something a fetch can still fill. No exception is raised on that path, so it
 implements no row. It is named here only so this file remains the whole
 inventory of exit codes; a driver that reads codes must learn 3 or its
 unrecognised-code rule will halt on a report that worked.
+EXIT_REFUSED, 4, is the same kind: init-db declining a database it did not create.
 
 Nothing in the table uses 0, 1 or 2. Those belong to the interpreter -- 1 for an
 unhandled exception, 2 for argparse's usage error -- and a driver that read 1 as
@@ -85,6 +86,44 @@ ValueError) -- because a library cannot see its callers' except clauses and has
 to land in the ones they already wrote; ours is flat because it has one caller
 and we can edit it.
 """
+
+# The five rows of the table above, plus config and two finding codes.
+# cron reads exit codes, not log levels, and the week 6 backfill driver will
+# read the same set:
+# 75 -> sleep and retry, 69 -> next day, 65 and 70 -> stop.
+#
+# None of these is 0, 1 or 2. The interpreter owns those: 1 for an unhandled
+# exception, 2 for argparse's usage error. Skip used to be 1, which meant a
+# locked database, a stray ValueError out of _prepare, or any bug at all would
+# have reached the driver wearing row 2's code and been walked past. The driver
+# should treat an unrecognised code as halt for the same reason.
+EXIT_OK = 0
+EXIT_HALT = 65       # rows 3 and 4: EX_DATAERR
+EXIT_SKIP = 69       # row 2: EX_UNAVAILABLE
+EXIT_BUG = 70        # row 5: EX_SOFTWARE, the residual
+EXIT_TRANSIENT = 75  # row 1: EX_TEMPFAIL
+EXIT_CONFIG = 78     # EX_CONFIG, kept distinct from argparse's own 2 for usage
+
+EXIT_GAPS_FOUND = 3   # a finding, not a failure: gaps exist that a
+                      # fetch can still fill. Off 1 and 2 for the reason
+                      # above; outside the table like EXIT_CONFIG, since no
+                      # exception was raised and nothing went wrong.
+                      # Out of numeric order deliberately -- it does not
+                      # belong to the sysexits run above it. Note this is the
+                      # first code a driver can meet that means neither "done"
+                      # nor "stop", so the rule that an unrecognised code is
+                      # halt now has something real to recognise: a driver
+                      # that has not learned 3 halts on a successful report.
+
+EXIT_REFUSED = 4      # init-db found objects already in the database and
+                      # declined. Like 3, a finding rather than a failure --
+                      # nothing raised, nothing broke, the command simply will
+                      # not act on a database it did not create. Its own code
+                      # rather than 65, because 65 is rows 3 and 4's and means a
+                      # source file changed shape underneath us or came up short.
+                      # And unlike 3, the unrecognised-code-is-halt rule costs 
+                      # nothing here: 
+                      # halt is what a driver meeting this should do anyway.
 
 
 class SourceTransientError(Exception):

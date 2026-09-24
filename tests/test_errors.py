@@ -9,8 +9,15 @@ months of data in the backfill.
 
 import pytest
 
-import main
 from hokkaido_grid.errors import (
+    EXIT_BUG,
+    EXIT_CONFIG,
+    EXIT_GAPS_FOUND,
+    EXIT_HALT,
+    EXIT_OK,
+    EXIT_REFUSED,
+    EXIT_SKIP,
+    EXIT_TRANSIENT,
     ConfigError,
     SchemaChanged,
     ShortFile,
@@ -53,8 +60,8 @@ def test_no_shared_base_below_exception():
 
 
 def test_exit_codes_are_distinct_and_not_the_interpreters():
-    codes = [main.EXIT_OK, main.EXIT_HALT, main.EXIT_SKIP,
-             main.EXIT_BUG, main.EXIT_TRANSIENT, main.EXIT_CONFIG]
+    codes = [EXIT_OK, EXIT_GAPS_FOUND, EXIT_REFUSED, EXIT_HALT,
+             EXIT_SKIP, EXIT_BUG, EXIT_TRANSIENT, EXIT_CONFIG] 
     assert len(set(codes)) == len(codes)
     # 1 is an unhandled exception and 2 is argparse's usage error; both belong
     # to the interpreter, and a driver cannot tell ours from those.

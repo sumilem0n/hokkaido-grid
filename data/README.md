@@ -35,28 +35,7 @@ Quarterly, before that:  .../csv/sup_dem_results_YYYY_Nq.csv  (2018_2q is .xls)
 eria_jukyu_202604_01.csv, fetched 2026-08-08, downloaded 2026-07-25.
 Unchanged over 15 days — one observation, not a retention guarantee.
 
-**TWO LAYOUTS, not one** (tools/check_monthly_schema.py, 28 months probed):
-  layout 1  20 cols  202404..202503
-  layout 2  22 cols  202504..202607  (+火力出力制御量, +バイオマス出力制御量)
-The page announces a 様式変更 at 2024-04 and does not mention this one.
-Both breaks fall on 1 April (年度 boundary); predict the next at 202704.
-
-**Index-based parsing is unsafe across the break.** Position 8 = 水力 in
-layout 1, 火力出力制御量 in layout 2. Resolve columns BY NAME and raise when
-a name is absent. Same rule as the daily unit guard.
-
-**Backfill scope: 28 months (202404-202607), not 16.** The four columns the
-current schema loads — エリア需要 / 太陽光発電実績 / 風力発電実績 / 合計 —
-exist in both layouts. The split constrains rung 7 only:
-  solar + wind curtailment  -> comparable across all 28 months
-  thermal + biomass         -> 202504 onward only
-A summed "total curtailment" series would step at 2025-04 for reporting
-reasons, not grid reasons. Week 10 decision, evidence recorded now.
-
-**Mutability.** The page states past data may be corrected retroactively,
-without notice, with no pre-correction version provided. A backfill is a
-SNAPSHOT. Capture date is provenance. This justifies the monthly track's
-full-reload DELETE+INSERT: newest correction wins.
+**Layouts, parsing by name and backfill scope:** see `../FIELDS.md`, *Column map* and *20-column layout*; the probe is `tools/check_monthly_schema.py`. **Retroactive correction, and why the monthly track reloads whole months:** see `../FIELDS.md`, *Source A — HEPCO area supply-demand actuals*.
 
 **Revision suffix:** `_02` on 202404 returns 404; `_01` is constant as of today.
 If a correction ever publishes as `_02`, URL construction 404s silently.
@@ -69,20 +48,7 @@ Endpoint: https://archive-api.open-meteo.com/v1/archive
 Regenerate:
     curl "https://archive-api.open-meteo.com/v1/archive?latitude=43.06&longitude=141.35&start_date=2026-04-01&end_date=2026-04-30&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation,snowfall&timezone=Asia/Tokyo" -o data/weather_sapporo_2026-04.json
 
-Grain: hourly, against half-hourly demand. Aggregate demand UP to hourly;
-do not interpolate weather down — temperature between readings is unmeasured.
-The column is MW, so hourly aggregation is a MEAN, not a SUM. Summing two
-~2600 MW readings gives a plausible ~5200 and is wrong.
-
-Spatial: one ERA5 grid cell (43.058, 141.429) standing in for area-wide
-demand. Defensible for temperature — Sapporo metro carries much of the load.
-NOT defensible for wind at rung 7: Hokkaido wind capacity is in Soya and
-Tokachi, so wind_speed_10m here is a poor proxy for area wind output.
-
-Latency: ERA5 reanalysis publishes on a delay; the daily demand feed expires
-in ~2 days. LATENCY FIGURE NOT YET VERIFIED against Open-Meteo's docs. If the
-delay exceeds the tail, the two sources cannot be fetched in one pass and
-joined immediately — forward capture must store them separately and join later.
+**Grain, spatial coverage and ERA5 latency:** see `../FIELDS.md`, the ERA5 weather section.
 
 Licence: CC BY 4.0 — attribution required:
 > Open-Meteo.com, CC BY 4.0. Zippenfenig, P. (2023). Open-Meteo.com Weather API.

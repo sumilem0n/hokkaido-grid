@@ -46,7 +46,9 @@ from 0; every column reference elsewhere in this file was renumbered in the same
   integer-sized (1, 2) means source rounding and the caveat was right, and the tolerance is
   ±1–2 MW, not 0.05. Fractional (0.4, 1.7) means it is not the source — the file publishes
   no decimals — and the defect is ours.
-  
+- Retroactive correction makes each monthly file a snapshot; its capture date is provenance. This
+  is why the monthly track replaces a whole month (DELETE then INSERT, one transaction) instead of
+  merging row by row: the newest correction wins.  
 
 ### Scope: one monthly file
 
@@ -73,7 +75,7 @@ Observed in one file, 2026-04. Header read 18 Sep:
 
     sed -n '2p' data/hepco_demand_2026-04.csv | iconv -f CP932 -t UTF-8 | tr ',' '\n' | nl
 
-The date range 202504–202607 for this layout is carried from the previous version of this entry.
+The header is identical in every file 202504–202607 (observed 25 Sep 2026, `tools/check_monthly_schema.py`).
 Only 2026-04 has been read.
 
 Column numbers count from 1, the way awk (`$1`) and `nl` count. Python counts list positions from
@@ -108,23 +110,29 @@ Kept columns marked [x]; the rest exist and can be added later.
 
 The monthly file records curtailment as volume only (MW per half-hour, per technology). It carries no reason code: supply-demand balance, grid congestion and any other cause are indistinguishable in this file. Checked 19 Sep against the 22-column header (1-indexed fields 1–22).
 
-### 20-column layout — UNVERIFIED
+### 20-column layout — header observed, data rows not read
 
-No 20-column file has been fetched. Nothing in this subsection is observed. It is an expectation,
-carried from the previous version of this entry.
+Observed 25 Sep 2026 with `tools/check_monthly_schema.py`, which fetches the first 2 KB of each
+monthly file and groups months by exact header text. It first ran on 9 Aug (`1fecc50`); that run's
+headers were printed and not kept. 202404–202503: one header, 20 columns, identical in all 12
+months. 202504–202607: one header, 22 columns, identical in all 16 — the map above. No fetch errors.
+The 20-column header, columns counted from 1 as above:
 
-Expected: files for 202404–202503 have 20 columns. Expected: 火力出力制御量 is absent, so 水力 sits
-at column 9, where 火力出力制御量 sits in the 22-column layout, and every later column moves left.
-The other absent column is expected to be バイオマス出力制御量 (column 13). Stated in
-`study-plan.md`'s week 10 cell and in the 17 Sep handoff: *thermal and biomass start at 202504,
-so a summed total steps at 2025-04 for reporting reasons.* In a curtailment context those are
-columns 9 and 13, and 22 minus the two gives 20, which closes the arithmetic. Still an
-expectation, not an observation — no 20-column file has been read.
+    DATE,TIME,エリア需要,原子力,火力(LNG),火力(石炭),火力(石油),火力(その他),水力,地熱,バイオマス,太陽光発電実績,太陽光出力制御量,風力発電実績,風力出力制御量,揚水,蓄電池,連系線,その他,合計
+
+The 22-column header is this one with two columns inserted: 火力出力制御量 (column 9) and
+バイオマス出力制御量 (column 13). Every other name is identical and in the same order. So 水力 is
+column 9 here, and rung 7's columns 14–17 (solar output, solar curtailment, wind output, wind
+curtailment) are columns 12–15. The four loaded columns — エリア需要, 太陽光発電実績, 風力発電実績,
+合計 — exist in both layouts. Solar and wind curtailment are comparable across all 28 months;
+thermal and biomass curtailment from 202504 only, so a summed total steps at 2025-04 for reporting
+reasons, not grid reasons.
+
+Both breaks fall on 1 April, the 年度 boundary. The disclosure page announces the 2024-04 様式変更
+and not the 2025-04 one. Predict the next at 202704. Not observed: any 20-column data row.
 
 What holds whichever layout arrives: resolve every column by header name and raise when a name is
-absent. Never by position. Rung 7 reads columns 14–17 of the 22-column layout, and their position
-in a 20-column file is exactly what is unconfirmed. Checkable only when the backfill pulls a
-202404–202503 file.
+absent. Never by position.
 
 ### Supply-demand identity
 

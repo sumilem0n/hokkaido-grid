@@ -18,6 +18,8 @@
 --   daily jisseki       — kWh, converted on load (÷ 500 for a half-hour average MW)
 --   daily juyo_01       — 万kW (×10), not currently loaded
 -- Every value stored here is MW; the conversion happens per loader, never in the schema.
+-- "(col N)" below is the 0-based position in the monthly エリア需給 CSV header (line 2 of the file),
+-- 22-column layout (202504 on). The 20-column layout (202404–202503) has never been observed.
 --
 -- This file is generated from `.schema` after a migration and hand-headed. Comments inside a
 -- table body survive; anything above the first CREATE does not. Re-add this block after any

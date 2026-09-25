@@ -853,6 +853,15 @@ minutes, next week; today is the PK migration and the loaders.
   delete `0 8`; it is whether `@reboot` still has a job now that the slot it was covering for
   fires.
 
+  *Answered 2026-09-25: `@reboot` has a job — it is the morning capture path.* September's 46
+  captures (fetch timestamps in `data/raw/`, 1–25 Sep), matched against `last reboot`: `@reboot`
+  25, `0 13` 16, `0 8` 3, by hand 2 (08:03 and 08:11). Every one of the month's 25 boots produced
+  a capture within two minutes, including 17:12 on 20 September. `0 8` can only fire on a day the
+  machine is up before 08:00; three boots came before 08:00 (3, 6 and 12 Sep) and three captures
+  are at 08:00 — consistent, not matched day by day. If they match, each followed an `@reboot`
+  capture from the same boot, and `0 8` added no capture of its own this month. `0 13` fired on
+  16 of the 24 days it could have. Deleting `0 8` is still undecided, with the cron work.
+
 - Acknowledgement must refuse a gap that is still recoverable. Acking a fixable day converts it to a
   permanent one by hand.
 - ~~**Mail is assumed and does not exist.**~~ **RESOLVED 23 Aug — see the notification-channel

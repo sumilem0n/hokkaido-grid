@@ -668,10 +668,24 @@ constraint or overwrites the daily row, destroying the comparison in the act of 
 
 ### Re-ask trigger
 
-**[OWED — NOT YET WRITTEN. §11's End-Sep line asks for one and this is the half still missing.]**
-The rewrite of the argument above landed 20 Aug (`2a541b9`); the trigger did not. A decision with
-consequences but no trigger cannot be revisited on evidence, only on memory. Write the condition
-that would make column option 3 or the composite key the wrong call — not a date, a condition.
+Written 25 Sep 2026. Three conditions. Each names the signal that fires without anyone having to
+remember to look, and what it reopens.
+
+1. **The daily feed stops publishing wind and solar as one column.** Signal: if
+   エリア風力・太陽光発電量 is renamed, split or removed, `_resolve_col` in `hepco_daily.py` finds no
+   matching column and raises `SourceUnavailable`, so the cron run writes `rc=69` to
+   `failures.log`. Reopens column option 3's ruling that daily `wind_mw` and `solar_mw` are NULL
+   permanently, and the daily loader. **Not covered:** separate wind and solar columns added
+   *alongside* the combined one. The prefix still matches exactly one column and nothing fires.
+   **Misfiled when it does fire:** 69 is also what a 404 produces, so a header change reads in
+   `failures.log` as an unavailable source, not as a schema change (65).
+2. **A third source is added.** Signal: the migration that widens `CHECK (source IN (...))` in
+   `sql/schema.sql`; nothing can be loaded under a third source name without it. Reopens the
+   composite key's precedence and `area_demand_current`, whose rank expression puts every
+   non-monthly source at 1, so two of them at one timestamp would both be returned.
+3. **More than one capture of the same monthly period is to be kept** (a correction history).
+   Signal: that decision itself. Reopens the key, which would need the capture date, and the
+   full-reload rule under *Source A*.
 
 ### Consequences
 

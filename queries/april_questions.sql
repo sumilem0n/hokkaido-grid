@@ -34,7 +34,7 @@ SELECT
     SUM(CASE WHEN demand_mw > 3500 THEN 1 ELSE 0 END)  AS periods_over_3500,
     ROUND(100.0 * SUM(CASE WHEN demand_mw > 3500 THEN 1 ELSE 0 END)
           / COUNT(*), 1)                               AS pct_over
-FROM area_demand
+FROM area_demand_current
 GROUP BY day_type
 ORDER BY day_type;
 
@@ -46,7 +46,7 @@ SELECT
     ROUND(AVG(demand_mw), 1)     AS avg_all,
     ROUND(AVG(CASE WHEN strftime('%Y-%m-%d', datetime_jst) <> '2026-04-29'
                    THEN demand_mw END), 1) AS avg_excl_holiday
-FROM area_demand
+FROM area_demand_current
 GROUP BY dow
 ORDER BY dow;
 
@@ -79,11 +79,11 @@ SELECT
     strftime('%w',       d.datetime_jst) AS dow,
     strftime('%H:%M',    d.datetime_jst) AS peak_time,
     d.demand_mw                          AS peak_mw
-FROM area_demand AS d
+FROM area_demand_current AS d
 JOIN (
     SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
            MAX(demand_mw)                     AS peak_mw
-    FROM area_demand
+    FROM area_demand_current
     GROUP BY day
 ) AS m
   ON strftime('%Y-%m-%d', d.datetime_jst) = m.day
@@ -115,7 +115,7 @@ SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
        COUNT(demand_mw)         AS values_present,
        ROUND(AVG(demand_mw), 1) AS avg_mw,
        MAX(demand_mw)           AS max_mw
-FROM area_demand
+FROM area_demand_current
 WHERE strftime('%Y-%m-%d', datetime_jst) = '2026-04-20';
 
 -- 3b. Is 4/20 low, or is the 3500 threshold just above its ceiling?
@@ -125,7 +125,7 @@ SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
        MAX(demand_mw)           AS max_mw,
        SUM(CASE WHEN demand_mw > 3400 THEN 1 ELSE 0 END) AS periods_over_3400,
        SUM(CASE WHEN demand_mw > 3500 THEN 1 ELSE 0 END) AS periods_over_3500
-FROM area_demand
+FROM area_demand_current
 WHERE strftime('%w', datetime_jst) = '1'
 GROUP BY day
 ORDER BY day;
@@ -135,7 +135,7 @@ WITH d AS (
     SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
            AVG(demand_mw)                     AS avg_mw,
            MAX(demand_mw)                     AS max_mw
-    FROM area_demand
+    FROM area_demand_current
     WHERE strftime('%w', datetime_jst) = '1'
     GROUP BY day
 ),
@@ -196,8 +196,8 @@ SELECT
     prev.demand_mw                      AS mw_at_00,
     cur.demand_mw                       AS mw_at_30,
     cur.demand_mw - prev.demand_mw      AS ramp_mw
-FROM area_demand AS cur
-JOIN area_demand AS prev
+FROM area_demand_current AS cur
+JOIN area_demand_current AS prev
   ON prev.datetime_jst = strftime('%Y-%m-%d %H:%M', cur.datetime_jst, '-30 minutes')
 WHERE strftime('%M', cur.datetime_jst) = '30'
 ORDER BY ABS(cur.demand_mw - prev.demand_mw) DESC
@@ -207,8 +207,8 @@ LIMIT 10;
 WITH ramps AS (
     SELECT CAST(strftime('%H', cur.datetime_jst) AS INTEGER) AS hour_of_day,
            cur.demand_mw - prev.demand_mw                    AS ramp_mw
-    FROM area_demand AS cur
-    JOIN area_demand AS prev
+    FROM area_demand_current AS cur
+    JOIN area_demand_current AS prev
       ON prev.datetime_jst = strftime('%Y-%m-%d %H:%M', cur.datetime_jst, '-30 minutes')
     WHERE strftime('%M', cur.datetime_jst) = '30'
 )
@@ -218,7 +218,7 @@ SELECT COUNT(*)                AS pairs,
        MIN(ramp_mw)            AS largest_down_ramp_mw,
        ROUND(AVG(ABS(ramp_mw)), 1) AS mean_abs_ramp_mw,
        ROUND(100.0 * MAX(ABS(ramp_mw))
-             / (SELECT AVG(demand_mw) FROM area_demand), 2) AS pct_of_mean_demand
+             / (SELECT AVG(demand_mw) FROM area_demand_current), 2) AS pct_of_mean_demand
 FROM ramps;
 
 -- 4c. Where in the day the movement lives — up-ramps and down-ramps separated,
@@ -226,8 +226,8 @@ FROM ramps;
 WITH ramps AS (
     SELECT CAST(strftime('%H', cur.datetime_jst) AS INTEGER) AS hour_of_day,
            cur.demand_mw - prev.demand_mw                    AS ramp_mw
-    FROM area_demand AS cur
-    JOIN area_demand AS prev
+    FROM area_demand_current AS cur
+    JOIN area_demand_current AS prev
       ON prev.datetime_jst = strftime('%Y-%m-%d %H:%M', cur.datetime_jst, '-30 minutes')
     WHERE strftime('%M', cur.datetime_jst) = '30'
 )
@@ -276,7 +276,7 @@ ORDER BY hour_of_day;
 WITH hourly AS (
     SELECT strftime('%Y-%m-%d %H:00', datetime_jst) AS hour_key,
            AVG(demand_mw)                           AS demand_mw
-    FROM area_demand
+    FROM area_demand_current
     GROUP BY hour_key
 ),
 paired AS (
@@ -295,7 +295,7 @@ FROM paired;
 WITH hourly AS (
     SELECT strftime('%Y-%m-%d %H:00', datetime_jst) AS hour_key,
            AVG(demand_mw)                           AS demand_mw
-    FROM area_demand
+    FROM area_demand_current
     GROUP BY hour_key
 ),
 paired AS (

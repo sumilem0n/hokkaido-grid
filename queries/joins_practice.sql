@@ -7,7 +7,7 @@
 --     Predicted 1440: LEFT side fully preserved; weather_hourly PK is unique so no fanout.
 --     Actual 1440.
 SELECT COUNT(*) AS matched_rows
-FROM area_demand AS d
+FROM area_demand_current AS d
 JOIN weather_hourly AS w
   ON strftime('%Y-%m-%d %H:00', d.datetime_jst) = w.datetime_jst;
 
@@ -16,7 +16,7 @@ JOIN weather_hourly AS w
 --     Confirmed separately: 0 surviving rows do NOT end in ':00'.
 --     Silent 50% data loss, no error raised. This is why the floored key exists.
 SELECT COUNT(*) AS matched_rows_exact
-FROM area_demand AS d
+FROM area_demand_current AS d
 JOIN weather_hourly AS w
   ON d.datetime_jst = w.datetime_jst;
 
@@ -25,7 +25,7 @@ JOIN weather_hourly AS w
 --     Tests the KEY column, not a measurement column: a matched row may legitimately
 --     carry a NULL measurement, and the two failures must not look alike.
 SELECT d.datetime_jst
-FROM area_demand AS d
+FROM area_demand_current AS d
 LEFT JOIN weather_hourly AS w
        ON strftime('%Y-%m-%d %H:00', d.datetime_jst) = w.datetime_jst
 WHERE w.datetime_jst IS NULL
@@ -40,7 +40,7 @@ ORDER BY d.datetime_jst;
 SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
        COUNT(*)         AS rows_present,
        COUNT(demand_mw) AS values_present
-FROM area_demand
+FROM area_demand_current
 GROUP BY day
 HAVING COUNT(*) <> 48 OR COUNT(demand_mw) <> 48
 ORDER BY day;
@@ -54,7 +54,7 @@ SELECT strftime('%Y-%m-%d', datetime_jst) AS day,
        ROUND(AVG(demand_mw), 1)                          AS avg_mw,
        SUM(CASE WHEN demand_mw > 3500 THEN 1 ELSE 0 END) AS periods_over_3500,
        ROUND(100.0 * SUM(CASE WHEN demand_mw > 3500 THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_over
-FROM area_demand
+FROM area_demand_current
 GROUP BY day
 ORDER BY day;
 

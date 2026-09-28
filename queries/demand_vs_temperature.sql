@@ -108,7 +108,7 @@ SELECT
     d.datetime_jst,
     d.demand_mw,
     w.temperature_c
-FROM area_demand AS d
+FROM area_demand_current AS d
 JOIN weather_hourly AS w
   ON strftime('%Y-%m-%d %H:00', d.datetime_jst) = w.datetime_jst
 ORDER BY d.datetime_jst
@@ -131,7 +131,7 @@ FROM (
         SUM(w.temperature_c * d.demand_mw)              AS sxy,
         SUM(w.temperature_c * w.temperature_c)          AS sxx,
         SUM(d.demand_mw * d.demand_mw)                  AS syy
-    FROM area_demand AS d
+    FROM area_demand_current AS d
     JOIN weather_hourly AS w
       ON w.datetime_jst = strftime('%Y-%m-%d %H:00', d.datetime_jst)
     WHERE strftime('%M', d.datetime_jst) = '00'
@@ -156,7 +156,7 @@ FROM (
         SUM(w.temperature_c * d.demand_mw)              AS sxy,
         SUM(w.temperature_c * w.temperature_c)          AS sxx,
         SUM(d.demand_mw * d.demand_mw)                  AS syy
-    FROM area_demand AS d
+    FROM area_demand_current AS d
     JOIN weather_hourly AS w
       ON w.datetime_jst = strftime('%Y-%m-%d %H:00', d.datetime_jst)
     GROUP BY hour_of_day
@@ -172,7 +172,7 @@ FROM (
            SUM(w.temperature_c * d.demand_mw) AS sxy,
            SUM(w.temperature_c * w.temperature_c) AS sxx,
            SUM(d.demand_mw * d.demand_mw) AS syy
-    FROM area_demand AS d
+    FROM area_demand_current AS d
     JOIN weather_hourly AS w
       ON w.datetime_jst = strftime('%Y-%m-%d %H:00', d.datetime_jst)
 )
@@ -184,7 +184,7 @@ FROM (
            SUM(w.temperature_c * d.demand_mw) AS sxy,
            SUM(w.temperature_c * w.temperature_c) AS sxx,
            SUM(d.demand_mw * d.demand_mw) AS syy
-    FROM area_demand AS d
+    FROM area_demand_current AS d
     JOIN weather_hourly AS w
       ON w.datetime_jst = strftime('%Y-%m-%d %H:00', d.datetime_jst)
     WHERE strftime('%M', d.datetime_jst) = '00'
@@ -203,7 +203,7 @@ FROM (
         SELECT strftime('%Y-%m-%d %H:00', d.datetime_jst) AS hour_key,
                AVG(d.demand_mw)                           AS dm,
                AVG(w.temperature_c)                       AS t
-        FROM area_demand AS d
+        FROM area_demand_current AS d
         JOIN weather_hourly AS w
           ON w.datetime_jst = strftime('%Y-%m-%d %H:00', d.datetime_jst)
         GROUP BY hour_key
@@ -227,7 +227,7 @@ FROM (
         SELECT strftime('%Y-%m-%d %H:00', d.datetime_jst) AS hour_key,
                AVG(d.demand_mw)                           AS dm,
                AVG(w.temperature_c)                       AS t
-        FROM area_demand AS d
+        FROM area_demand_current AS d
         JOIN weather_hourly AS w
           ON w.datetime_jst = strftime('%Y-%m-%d %H:00', d.datetime_jst)
         GROUP BY hour_key

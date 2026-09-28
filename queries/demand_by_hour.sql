@@ -19,7 +19,7 @@ SELECT
     ROUND(AVG(demand_mw), 1)                      AS avg_demand_mw,
     MIN(demand_mw)                                AS min_demand_mw,
     MAX(demand_mw)                                AS max_demand_mw
-FROM area_demand
+FROM area_demand_current
 GROUP BY hour_of_day
 ORDER BY hour_of_day
 ;

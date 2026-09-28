@@ -143,9 +143,11 @@ lives. The rule for reads is view-first, with `gaps` the one documented
 exemption: decided 27 August and cited in `hokkaido_grid/gaps.py`, `FIELDS.md`
 and `sql/queries/forward_step.sql`, on the grounds that the view hides source
 identity and a gap report needs it. The queries under `queries/` predate the view
-and have never been audited against the rule; `sql/queries/` holds the ones
-written after it, each against the view. `weather_hourly` is hourly and
-keyed on `datetime_jst` alone.
+and read the table until 28 September, when all four were pointed at the view;
+their output on that day's data was identical before and after. Results recorded
+in their comments date from August, when only April was loaded. `sql/queries/`
+holds the five written after the rule, each against the view; they are the
+project's query set. `weather_hourly` is hourly and keyed on `datetime_jst` alone.
 
 Column meanings, units, source layouts and the reasoning behind each decision live
 in `FIELDS.md`. They are not restated here.

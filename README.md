@@ -53,6 +53,18 @@ number of periods, 135 each, but not at the same scale: solar lost 15,895.5 MWh 
 month. This is one month from one utility. A backfill across the monthly archive would test
 whether both findings hold outside April.
 
+## Demand and temperature, April 2026
+
+![Mean hourly demand per 3 °C temperature bucket, April 2026](outputs/rung6/demand_by_temperature_3c_apr2026.png)
+
+**Period.** April 2026 only, because `weather_hourly` ends on 30 April.
+
+**Sample size.** 720 hours. The two end buckets are thin: 7 hours below 0 °C and 6 hours at 18–21 °C. Their averages are less reliable than the others.
+
+**Not adjusted for time of day.** Warm hours are likely to fall in the daytime, and this chart does not separate the two, so it does not show that warmth causes higher demand.
+
+**Shape.** The bars look nearly flat, so here are the numbers. Demand rises from about 3037 MW to a peak of about 3198 MW at 12–15 °C, then falls to about 2975 MW. That is a spread of about 7%.
+
 ## Provenance
 
 ```

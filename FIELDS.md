@@ -1133,3 +1133,51 @@ Causes, as recorded in the Verification Log:
 - 24 Aug: three raw files on disk, no rows; rc=75 on 25 Aug. Fetched, never loaded.
 - 27–29 Aug: machine off; no raw file and no failures.log line.
 - 6 Sep: rc=75 twice on 7 Sep; retryable, never retried.
+## Backfill acquisition: spec (2 Oct 2026)
+
+Written before the build. The numbers come from checks run on 2 Oct 2026.
+
+### 1. Where this spec lives
+- Decision: Here, in FIELDS.md, as one section.
+- Gives up: FIELDS.md gets longer, and this section has to be rewritten from plan to fact when the build is done.
+- Checked by: When the build closes, no sentence here is still in the future tense.
+
+### 2. Scope
+- Decision: 202404 to 202608, 29 months. On 2 Oct 2026 the 202608 file had 31 dates with 48 rows each and no empty demand field. 202609 is left out: on the same day it had 144 dated rows with an empty demand field. It can be loaded as one more file once it is complete.
+- Gives up: The plan's "28 files" needs a correction. The monthly and daily sources overlap for the first time, on the 10 August days the daily track holds.
+- Checked by: The inventory query shows 29 monthly months, each with days × 48 rows. The table has more rows than the view, by a number predicted before the load.
+
+### 3. Entry point
+- Decision: A sixth main.py subcommand. For each month in scope it downloads the file if none is on disk, then loads it through the same function `monthly` uses.
+- Gives up: More code in the tested path, and it needs its own tests before it touches the real database.
+- Checked by: Tests with the download replaced by a local file: a complete month loads; a 404 stops the run with the failure table's exit code.
+
+### 4. HTTP path
+- Decision: Add a function to fetch.py that runs the same retry loop and returns the raw bytes. `get_text` stays for callers that want text.
+- Gives up: It changes a module that has no tests, so tests for it are part of this build.
+- Checked by: Tests: a 200 returns the bytes unchanged; a 404 raises SourceUnavailable; a 503 followed by a 200 returns the bytes.
+
+### 5. File names and overwriting
+- Decision: data/monthly/eria_jukyu_YYYYMM_01__YYYY-MM-DD.csv, which is HEPCO's file name plus the capture date. The bytes are written as received, before any decode. A file is never overwritten.
+- Gives up: The load needs a rule for which capture to use (the newest). April's existing file keeps its old name.
+- Checked by: After a run, `ls` shows one file per month in scope. A second run on the same day downloads nothing.
+
+### 6. Completeness on a first load
+- Decision: A monthly file is complete when every calendar date of its month appears on exactly 48 rows and no dated row has an empty demand field. Lines with an empty date are padding and are not counted. An incomplete file raises ShortFile and nothing is written. The check runs inside the load, so `monthly` run by hand is covered too.
+- Gives up: An unfinished month cannot be loaded at all, even on purpose. Tested load code changes.
+- Checked by: A test shown red first: the 2 Oct capture of 202609 against an empty scratch database must fail and leave the table empty. April must still load 1440 rows.
+
+### 7. --dry-run
+- Decision: An option on the load, for `monthly` and for the new subcommand. It does the delete and the insert inside the transaction, prints the two counts, then rolls back.
+- Gives up: A dry run still executes write statements, so "nothing changed" has to be shown, not assumed. The new subcommand's dry run still downloads missing files.
+- Checked by: On a /tmp copy: the inventory query prints the same lines before and after the dry run. A real run then prints the same two counts.
+
+### 8. Failure and re-run
+- Decision: One month at a time, oldest first. Stop at the first failure with the failure table's exit code. A re-run downloads only months with no capture on disk and loads every month again; loading a month replaces only its own rows. Wait 1 second between downloads.
+- Gives up: One bad month blocks the months after it until it is dealt with. A correction published as `_02` is not seen, because only `_01` is requested.
+- Checked by: A test where the third month returns 404: two months are loaded, the exit code is not 0, and no later month is touched.
+
+### 9. Verifying the finished build
+- Decision: The first full run is on a /tmp copy. Before it, written predictions: total monthly rows, and table rows minus view rows. The real database is copied and the copy checked with `cmp` before the real run, which is kept clear of the capture times (boot, 08:00, 13:00). `gaps` is run afterwards and its figure written here.
+- Gives up: Two full runs, not one.
+- Checked by: The predictions against the output, the `cmp` line, and the `gaps` figure in this file with its date.

@@ -443,7 +443,8 @@ safe to attempt — a partial file raises rather than loading.
 ### A 46-row day — OBSERVED 2026-08-25, and it is not the same thing
 
 `hepco_daily_20260824__20260825T082525.csv` and `...T082828.csv` (byte-identical,
-`cmp` silent): 46 periods. `時間コマ 47` (23:00–23:30) absent as well as 48.
+`cmp` silent): 46 periods. The `時間コマ 47` row (23:00–23:30) is present and its
+values are blank, the same as 48. (Corrected 4 Oct 2026: this said "absent".)
 Internal stamp `20260824,23:13:25,20260824`.
 
 Compare the two stamps directly, which is possible only because both days'
@@ -473,6 +474,8 @@ for zero.
 46-day); do not treat the pattern as established. What would settle it: a second
 short day, or the 2026-08 monthly file showing whether 23:00 on the 24th exists
 in the corrected archive.
+
+**Decided 3 Oct 2026.** See "Daily track: short days and failed requests (4 Oct 2026)" at the end of this file.
 
 ### File shape
 
@@ -1132,7 +1135,7 @@ Causes, as recorded in the Verification Log:
 - 7–8, 10–14, 16–20 Aug: before rung 4 (cron, 23 Aug); not fetched.
 - 24 Aug: three raw files on disk, no rows; rc=75 on 25 Aug. Fetched, never loaded.
 - 27–29 Aug: machine off; no raw file and no failures.log line.
-- 6 Sep: rc=75 twice on 7 Sep; retryable, never retried.
+- 6 Sep: rc=75 twice on 7 Sep, at 08:26 and 13:00, on the same bytes both times. A finished short day. (Corrected 4 Oct 2026.)
 ## Backfill acquisition: spec (2 Oct 2026)
 
 Written before the build. The numbers come from checks run on 2 Oct 2026.
@@ -1180,4 +1183,56 @@ Written before the build. The numbers come from checks run on 2 Oct 2026.
 ### 9. Verifying the finished build
 - Decision: The first full run is on a /tmp copy. Before it, written predictions: total monthly rows, and table rows minus view rows. The real database is copied and the copy checked with `cmp` before the real run, which is kept clear of the capture times (boot, 08:00, 13:00). `gaps` is run afterwards and its figure written here.
 - Gives up: Two full runs, not one.
-- Checked by: The predictions against the output, the `cmp` line, and the `gaps` figure in this file with its date.
+- Checked by: The predictions against the output, the `cmp` line, and the `gaps` figure in this file with its date. 
+
+## Daily track: short days and failed requests (4 Oct 2026)
+
+Decided on 3 Oct 2026 and written here before any code changed. The evidence is in the 3 Oct 2026 Verification Log entry.
+
+A short day is a daily file with a blank period other than 23:30. Two are on record, 24 Aug and 6 Sep. Both are stamped 23:13 and both have 23:00 blank.
+
+### 1. A finished short day loads
+- Decision: Its filled periods load. A warning names each blank period. Exit 0.
+- Gives up: The table holds a day with 46 periods, and `failures.log` gets no line for it.
+- Checked by: A test where a next-day file with 23:00 blank returns 46 rows.
+
+### 2. What "finished" means
+- Decision: A file is finished once the day it covers is over.
+- Gives up: If HEPCO ever filled in a blank after the last run that fetched the day, a day loaded at 46 would stay at 46.
+- Checked by: One file with 23:00 blank, tested twice through `today`: once as today's file and once as yesterday's.
+
+### 3. A file fetched on the day it covers
+- Decision: It keeps exit 75.
+- Gives up: A same-day run with a blank still exits 75, although nothing is wrong with the file. Only a run by hand can ask for today. The wrapper always asks for yesterday, so this case writes no `failures.log` line.
+- Checked by: A test where a same-day file with a blank raises `SourceTransientError`.
+
+### 4. The row count
+- Decision: Filled plus blank must be exactly 47, with the age checked first. The blank 23:30 row is not counted, as now. Under 47 is row 4, `ShortFile`. Over 47 is row 3, `SchemaChanged`.
+- Gives up: Both cases move from exit 69 to 65, and `ShortFile` gains a daily caller.
+- Checked by: Two tests. A file with 46 counted rows raises `ShortFile`. A file with 48 raises `SchemaChanged`.
+
+### 5. A file with nothing filled
+- Decision: Refused as row 3, `SchemaChanged`, exit 65. That it is refused was decided on 3 Oct. The row was decided on 4 Oct. Reason: one such file cannot show whether HEPCO left a single day empty or stopped putting values where the parser reads them. A halt costs one look at the file. A skip would pass over the second case on every later day.
+- Gives up: The skip. The run stops even if HEPCO only left one day empty.
+- Checked by: A test with 47 rows, all blank, on a finished day. It raises `SchemaChanged`.
+
+### 6. A failed request
+- Decision: Left to the schedule. Nothing is built and `fetch.py` is not touched. The question is asked again at the first request-failure day the schedule does not recover.
+- Gives up: The schedule only helps on days when the machine is on at a later scheduled time.
+- Checked by: Nothing to test. The re-ask condition is the check.
+
+### 7. 24 Aug and 6 Sep
+- Decision: Both are loadable, 46 periods each. Neither is loaded, and no date is set.
+- Gives up: The only copies are in `data/raw/`, which is not in git and has no backup. Nothing in the repository loads from a raw file.
+- Checked by: A statement only. The backfill will load 24 Aug from the monthly file. 6 Sep is outside its scope.
+
+### Effect on the failure table
+- Row 1's wording ("the file arrived intact but incomplete") still covers a finished short day. It should stop doing so. After decision 1, the only incomplete file left in row 1 is a same-day file.
+- Row 4's wording ("shorter than what it replaces") does not cover a daily file under 47 rows. A daily file replaces nothing.
+- Row 1's caller action says "retry with backoff". The wrapper runs `main.py` once.
+
+### Effect on cron
+- No crontab line changes.
+- A failed request waits for the next scheduled run.
+- A loaded short day writes no `failures.log` line.
+

@@ -6,10 +6,14 @@ figure already expressed per hour, and dividing it by 500 doubles every
 value -- inside the bounds check for any period under 3000 MW true demand.
 """
 
-import pytest
+import datetime
 
-from hokkaido_grid.errors import SourceUnavailable
-from hokkaido_grid.sources.hepco_daily import _parse_row, _resolve_col
+import pytest
+import requests
+
+from hokkaido_grid.errors import SourceTransientError, SourceUnavailable
+from hokkaido_grid.sources.hepco_daily import _parse_row, _resolve_col, fetch
+
 
 FIELDS = [
     "日付", "時間コマ", "時間帯_自", "時間帯_至",
@@ -96,3 +100,50 @@ def test_wind_solar_blank_is_none_not_zero():
     }
     parsed = _parse_row(row, "エリア総需要量(kWh)", "エリア風力・太陽光発電量(kWh)")
     assert parsed["wind_solar_mw"] is None
+
+def _finished_short_day_bytes():
+    # A finished day's file for 24 Aug 2026 in which only periods 1 to 46
+    # were ever filled. Periods 47 and 48 are present but blank.
+    lines = [
+        "ファイル更新日,ファイル更新時間,対象年月日",
+        "20260824,23:13:00,20260824",
+        "日付,時間コマ,時間帯_自,時間帯_至,"
+        "エリア総需要量(kWh),エリア総発電量(kWh),エリア風力・太陽光発電量(kWh)",
+    ]
+    for period in range(1, 47):
+        start = (period - 1) * 30
+        end = period * 30
+        lines.append(
+            f"20260824,{period},"
+            f"{start // 60}:{start % 60:02d},{end // 60}:{end % 60:02d},"
+            "1000000,1000000,100000"
+        )
+    lines.append("20260824,47,23:00,23:30,,,")
+    lines.append("20260824,48,23:30,24:00,,,")
+    return "\n".join(lines).encode("cp932")
+
+@pytest.mark.xfail(
+    raises=SourceTransientError,
+    strict=True,
+    reason="no-retry decision 1 is not built: a finished short day still raises",
+)
+
+def test_fetch_returns_46_rows_for_a_finished_day(monkeypatch):
+    
+    sample_bytes = _finished_short_day_bytes()
+
+    class StandInResponse:
+        status_code = 200
+        content = sample_bytes
+
+        def raise_for_status(self):
+            return None
+
+    def stand_in_get(*args, **kwargs):
+        return StandInResponse()
+
+    monkeypatch.setattr(requests, "get", stand_in_get)
+
+    rows = fetch(datetime.date(2026, 8, 24), today=datetime.date(2026, 8, 25))
+
+    assert len(rows) == 46

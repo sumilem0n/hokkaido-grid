@@ -18,7 +18,7 @@ parse_monthly_demand and stop being able to say anything about a truncated
 """
 
 import calendar
-
+import sqlite3
 import pytest
 
 from conftest import MONTHLY
@@ -32,6 +32,7 @@ PERIODS_PER_DAY = 48                 # monthly cadence. The daily track is 47,
 
 APRIL = "2026-04"
 MARCH = "2026-03"
+SEPTEMBER = "2026-09"
 
 APRIL_ROWS = 30 * PERIODS_PER_DAY    # 1440
 MARCH_ROWS = 31 * PERIODS_PER_DAY    # 1488
@@ -40,6 +41,10 @@ MARCH_ROWS = 31 * PERIODS_PER_DAY    # 1488
 # download stops wherever the connection died, and a guard that only noticed
 # whole missing days would walk past this one.
 TRUNCATED_ROWS = 198
+
+# 28, 29 and 30 September: 3 days x 48 = 144 rows that carry a date and a time
+# and nothing else. The 27 days before them are filled, 1296 rows.
+EMPTY_DAYS = 3
 
 # The real file's first line is the unit banner, which parse_monthly_demand
 # skips by count rather than by content, and its last ~48 lines are all-comma
@@ -55,27 +60,41 @@ TRAILING_BLANKS = 48
 # and this fixture writes exactly that; if a column is added to the contract
 # this file stops parsing, which is the correct place to find out.
 
+def _month_lines(year, month, *, limit=None, blanks=TRAILING_BLANKS, empty_days=0):
+    """The lines of one monthly CSV. `limit` truncates the data rows.
 
-def _month_lines(year, month, *, limit=None, blanks=TRAILING_BLANKS):
-    """The lines of one monthly CSV. `limit` truncates the data rows."""
+    `empty_days` is how many days at the end of the month are dated but empty:
+    the DATE and TIME are written and the four value fields are not.
+    """
     lines = [BANNER, ",".join(HEADER)]
 
+    days_in_month = calendar.monthrange(year, month)[1]
+    first_empty_day = days_in_month - empty_days + 1
+
     data = []
-    for day in range(1, calendar.monthrange(year, month)[1] + 1):
+    for day in range(1, days_in_month + 1):
         for period in range(PERIODS_PER_DAY):
             hour, minute = divmod(period * 30, 60)
-            # Legal under every CHECK in the table: demand is positive, the
-            # two parts are non-NULL and non-negative, and wind_solar_mw --
-            # which the parser derives rather than reads -- lands on their sum
-            # exactly, well inside the 0.05 the monthly derivation CHECK
-            # allows. A row that failed a CHECK would raise IntegrityError and
-            # this suite would go red for a reason that has nothing to do with
-            # the guard.
-            demand = 3000.0 + period
-            data.append(
-                f"{year}/{month:02d}/{day:02d},{hour:02d}:{minute:02d},"
-                f"{demand},120.0,80.0,{demand}"
-            )
+            if day >= first_empty_day:
+                # Date, time, then four empty fields. The row still has a DATE,
+                # so the parser's DATE check keeps it, unlike the all-comma
+                # padding at the foot of the file.
+                data.append(
+                    f"{year}/{month:02d}/{day:02d},{hour:02d}:{minute:02d},,,,"
+                )
+            else:
+                # Legal under every CHECK in the table: demand is positive, the
+                # two parts are non-NULL and non-negative, and wind_solar_mw --
+                # which the parser derives rather than reads -- lands on their
+                # sum exactly, well inside the 0.05 the monthly derivation CHECK
+                # allows. A row that failed a CHECK would raise IntegrityError
+                # and this suite would go red for a reason that has nothing to
+                # do with the guard.
+                demand = 3000.0 + period
+                data.append(
+                    f"{year}/{month:02d}/{day:02d},{hour:02d}:{minute:02d},"
+                    f"{demand},120.0,80.0,{demand}"
+                )
 
     if limit is not None:
         # Cut, not filtered: the tail of the file is simply absent, blank rows
@@ -85,8 +104,7 @@ def _month_lines(year, month, *, limit=None, blanks=TRAILING_BLANKS):
 
     return lines + data + ["," * (len(HEADER) - 1)] * blanks
 
-
-def _month_csv(tmp_path, name, year, month, *, limit=None):
+def _month_csv(tmp_path, name, year, month, *, limit=None, empty_days=0):
     """Write one monthly CSV under tmp_path and return its path.
 
     cp932 and CRLF, because that is what parse_monthly_demand opens the file
@@ -95,11 +113,9 @@ def _month_csv(tmp_path, name, year, month, *, limit=None):
     the day someone cleans out /tmp and red forever after.
     """
     path = tmp_path / name
-    path.write_bytes(
-        "\r\n".join(_month_lines(year, month, limit=limit)).encode("cp932") + b"\r\n"
-    )
+    lines = _month_lines(year, month, limit=limit, empty_days=empty_days)
+    path.write_bytes("\r\n".join(lines).encode("cp932") + b"\r\n")
     return path
-
 
 def _rows_in(conn, month, source=MONTHLY):
     """How many rows of `source` the database holds for one calendar month.
@@ -236,3 +252,28 @@ def test_the_rollback_does_not_reach_the_previous_month(schema, tmp_path):
 
     assert _rows_in(schema, MARCH) == MARCH_ROWS
     assert _rows_in(schema, APRIL) == APRIL_ROWS
+
+@pytest.mark.xfail(
+    raises=sqlite3.IntegrityError,
+    strict=True,
+    reason="backfill decision 6 is not built: an empty demand field reaches the INSERT",
+)
+def test_a_month_whose_last_days_are_dated_but_empty_is_refused(schema, tmp_path):
+    """A file that is the right length and still not complete.
+
+    September 2026 with all 1440 dated rows present, but the last 144 of them
+    hold a date, a time and four empty fields. No line is missing, so nothing
+    that counts lines or rows can see it.
+
+    Two assertions. The load must raise ShortFile, and after it the table must
+    hold no September rows at all: the 1296 filled rows are not to be kept
+    when the month they belong to is incomplete.
+    """
+    september = _month_csv(
+        tmp_path, "september.csv", 2026, 9, empty_days=EMPTY_DAYS
+    )
+
+    with pytest.raises(ShortFile):
+        load_demand(schema, september)
+
+    assert _rows_in(schema, SEPTEMBER) == 0

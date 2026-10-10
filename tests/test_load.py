@@ -277,3 +277,23 @@ def test_a_month_whose_last_days_are_dated_but_empty_is_refused(schema, tmp_path
         load_demand(schema, september)
 
     assert _rows_in(schema, SEPTEMBER) == 0
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="backfill decision 6 is not built: a short first load is not refused",
+)
+def test_a_truncated_first_load_is_refused(schema, tmp_path):
+    """A truncated file into an empty database is refused, and nothing is kept.
+
+    The same 198-row April that test_first_load_is_unguarded loads. No earlier
+    load exists, so there is no previous row count to compare against.
+
+    Two assertions. The load must raise ShortFile, and after it the table must
+    hold no April rows: the 198 rows are not to be kept.
+    """
+    short = _month_csv(tmp_path, "april_short.csv", 2026, 4, limit=TRUNCATED_ROWS)
+
+    with pytest.raises(ShortFile):
+        load_demand(schema, short)
+
+    assert _rows_in(schema, APRIL) == 0

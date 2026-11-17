@@ -253,11 +253,6 @@ def test_the_rollback_does_not_reach_the_previous_month(schema, tmp_path):
     assert _rows_in(schema, MARCH) == MARCH_ROWS
     assert _rows_in(schema, APRIL) == APRIL_ROWS
 
-@pytest.mark.xfail(
-    raises=sqlite3.IntegrityError,
-    strict=True,
-    reason="backfill decision 6 is not built: an empty demand field reaches the INSERT",
-)
 def test_a_month_whose_last_days_are_dated_but_empty_is_refused(schema, tmp_path):
     """A file that is the right length and still not complete.
 

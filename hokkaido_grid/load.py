@@ -331,12 +331,18 @@ def merge_rows(
     logger.info("%s: %s of %s rows written (%s, merge)",
                 table, written, len(payload), source)
 
-
 def load_demand(conn: sqlite3.Connection, path: Path) -> None:
     rows, dropped = parse_monthly_demand(path)
+
+    for row in rows:
+        if row["demand_mw"] is None:
+            raise ShortFile(
+                f"{path}: missing demand at {row['datetime_jst']}; "
+                "refusing to load an incomplete month"
+            )
+
     replace_rows(conn, "area_demand", rows, AUTHORITATIVE_SOURCE)
     logger.info("area_demand: dropped %s blank rows", dropped)
-
 
 def load_weather(conn: sqlite3.Connection, path: Path) -> None:
     # Third write strategy in this module, deliberately: neither replace_rows

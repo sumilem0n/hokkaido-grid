@@ -23,12 +23,19 @@ from hokkaido_grid.errors import (
     SourceTransientError,
     SourceUnavailable,
 )
-from hokkaido_grid.gaps import find_gaps, format_report, has_actionable
-from hokkaido_grid.load import load_demand, load_weather, merge_rows
+from hokkaido_grid.gaps import (
+    expected_periods,
+    find_gaps,
+    format_report,
+    has_actionable,
+    loaded_periods,
+    missing_periods,
+)
+from hokkaido_grid.load import AUTHORITATIVE_SOURCE, load_demand, load_weather, merge_rows
 from hokkaido_grid.sources import hepco_daily
 
 SOURCE_NAME = "hepco_daily_jisseki"
-
+AUTHORITATIVE_SOURCE == "hepco_monthly_areajukyu"  
 
 log = logging.getLogger("main")
 
@@ -64,6 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
     gaps.add_argument("start", help="YYYY-MM-DD")
     gaps.add_argument("end", help="YYYY-MM-DD")
     sub.add_parser("init-db", help="create the tables in an empty database")
+    report = sub.add_parser("report", help="show peak demand and source coverage")
+    report.add_argument("date", help="report date (YYYY-MM-DD)")
     return parser
 
 
@@ -213,12 +222,61 @@ def cmd_gaps(args: argparse.Namespace, cfg: Config) -> int:
     print(format_report(found))
     return EXIT_GAPS_FOUND if has_actionable(found) else EXIT_OK
 
+def cmd_report(args: argparse.Namespace, cfg: Config) -> int:
+    try:
+        day = date.fromisoformat(args.date)
+        next_day = day + timedelta(days=1)
+    except (ValueError, OverflowError):
+        print(f"Invalid report date: {args.date}. Use YYYY-MM-DD.", file=sys.stderr)
+        return 2
+
+    bounds = (f"{day} 00:00", f"{next_day} 00:00")
+    conn = sqlite3.connect(cfg.db_path)
+    try:
+        conn.execute("BEGIN")
+        peak = conn.execute(
+            """
+            SELECT datetime_jst, demand_mw
+            FROM area_demand_current
+            WHERE datetime_jst >= ? AND datetime_jst < ?
+            ORDER BY demand_mw DESC, datetime_jst ASC
+            LIMIT 1
+            """,
+            bounds,
+        ).fetchone()
+
+        coverage_lines = []
+        for label, source in (
+            ("Daily feed", SOURCE_NAME),
+            ("Monthly archive", AUTHORITATIVE_SOURCE),
+        ):
+            expected = expected_periods(source, day, day)
+            present = loaded_periods(conn, source, day, day)
+            missing = missing_periods(expected, present)
+            line = f"{label} coverage: {len(expected) - len(missing)}/{len(expected)}."
+            if missing:
+                times = ", ".join(slot.strftime("%H:%M") for slot in missing)
+                line += f" Missing (JST): {times}."
+            coverage_lines.append(line)
+    finally:
+        conn.close()
+
+    if peak is None:
+        print("No demand readings available.")
+    else:
+        timestamp, demand_mw = peak
+        print(f"Highest observed demand was {demand_mw:,.12g} MW at {timestamp[11:]} JST.")
+
+    for line in coverage_lines:
+        print(line)
+    return EXIT_OK
 
 COMMANDS = {
     "daily": cmd_daily,
     "monthly": cmd_monthly,
     "weather": cmd_weather,
     "gaps": cmd_gaps,
+    "report":cmd_report,
     "init-db": cmd_init_db,
 }
 
